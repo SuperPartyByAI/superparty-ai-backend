@@ -30,12 +30,12 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: "*", // poți restricționa mai târziu
+    origin: "*", // poți restricționa mai târziu la domeniile tale
     credentials: false,
   })
 );
 
-// Healthcheck pentru Railway
+// ====== HEALTHCHECK (trebuie să meargă și local, și pe Railway) ======
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
@@ -91,12 +91,7 @@ app.post("/api/auth/register", async (req, res) => {
       VALUES ($1, $2, $3, $4, 'angajat', 'required', FALSE)
       RETURNING id, full_name, email, role, kyc_status, is_approved
       `,
-      [
-        fullName,
-        email.toLowerCase(),
-        phone,
-        passwordHash,
-      ]
+      [fullName, email.toLowerCase(), phone, passwordHash]
     );
 
     const user = result.rows[0];
