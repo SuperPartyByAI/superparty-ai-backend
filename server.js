@@ -1,13 +1,11 @@
-// server.js - SuperParty backend (ESM)
+// server.js - SuperParty backend (CommonJS)
 
-import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
-import pkg from "pg";
-
-const { Pool } = pkg;
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const { Pool } = require("pg");
 
 // ====== CONFIG ======
 const PORT = process.env.PORT || 3000;
