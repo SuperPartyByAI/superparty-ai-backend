@@ -4,6 +4,9 @@ const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
 const crypto = require("crypto");
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 
 const app = express();
 
@@ -24,6 +27,25 @@ const pool = new Pool({
     ? { rejectUnauthorized: false }
     : false,
 });
+
+// === Configurare upload fișiere KYC ===
+const kycUploadDir = path.join(__dirname, "uploads", "kyc");
+fs.mkdirSync(kycUploadDir, { recursive: true });
+
+const kycStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, kycUploadDir);
+  },
+  filename: (req, file, cb) => {
+    const email = (req.body.email || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_");
+    const ext = path.extname(file.originalname || "");
+    const field = file.fieldname;
+    const ts = Date.now();
+    cb(null, `${email}_${field}_${ts}${ext}`);
+  },
+});
+
+const kycUpload = multer({ storage: kycStorage });
 
 // Helperi pentru parole (fără bcrypt, doar crypto built-in)
 function hashPassword(password) {
@@ -47,9 +69,9 @@ function verifyPassword(password, stored) {
   }
 }
 
-// Funcție pentru inițializarea tabelei users
+// Funcție pentru inițializarea tabelelor
 async function initDb() {
-  const createTableSql = `
+  const createUsersSql = `
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       full_name TEXT NOT NULL,
@@ -65,8 +87,29 @@ async function initDb() {
     );
   `;
 
-  await pool.query(createTableSql);
-  console.log("Tabela 'users' este pregătită.");
+  const createKycSql = `
+    CREATE TABLE IF NOT EXISTS kyc_submissions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      cnp TEXT NOT NULL,
+      address TEXT NOT NULL,
+      iban TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      id_front_path TEXT NOT NULL,
+      id_back_path TEXT NOT NULL,
+      selfie_path TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', -- pending / approved / rejected
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
+  await pool.query(createUsersSql);
+  await pool.query(createKycSql);
+
+  console.log("Tabelele 'users' și 'kyc_submissions' sunt pregătite.");
 }
 
 // Healthcheck
@@ -223,6 +266,182 @@ app.post("/api/auth/login", async (req, res) => {
     });
   }
 });
+
+// === KYC: status ===
+app.get("/api/kyc/status", async (req, res) => {
+  try {
+    const email = (req.query.email || "").trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: "Lipsește parametrul email.",
+      });
+    }
+
+    const userResult = await pool.query(
+      "SELECT id, kyc_status FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Utilizator inexistent.",
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    const kycResult = await pool.query(
+      `
+        SELECT status
+        FROM kyc_submissions
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [user.id]
+    );
+
+    if (kycResult.rows.length === 0) {
+      const status =
+        user.kyc_status === "approved" ||
+        user.kyc_status === "pending" ||
+        user.kyc_status === "rejected"
+          ? user.kyc_status
+          : "none";
+
+      return res.json({
+        success: true,
+        status,
+      });
+    }
+
+    return res.json({
+      success: true,
+      status: kycResult.rows[0].status, // pending / approved / rejected
+    });
+  } catch (err) {
+    console.error("ERROR /api/kyc/status:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Eroare internă de server KYC.",
+      details: err.message,
+      code: err.code || null,
+    });
+  }
+});
+
+// === KYC: submit ===
+app.post(
+  "/api/kyc/submit",
+  kycUpload.fields([
+    { name: "idFront", maxCount: 1 },
+    { name: "idBack", maxCount: 1 },
+    { name: "selfie", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const {
+        email,
+        fullName,
+        cnp,
+        address,
+        iban,
+        phone,
+        contractAccepted,
+      } = req.body || {};
+
+      if (!email || !fullName || !cnp || !address || !iban || !phone) {
+        return res.status(400).json({
+          success: false,
+          error: "Lipsesc câmpuri obligatorii.",
+        });
+      }
+
+      if (!req.files || !req.files.idFront || !req.files.idBack || !req.files.selfie) {
+        return res.status(400).json({
+          success: false,
+          error: "Lipsesc pozele (față, verso buletin sau selfie).",
+        });
+      }
+
+      if (contractAccepted !== "true") {
+        return res.status(400).json({
+          success: false,
+          error: "Contractul nu este acceptat.",
+        });
+      }
+
+      const userResult = await pool.query(
+        "SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
+        [email]
+      );
+
+      if (userResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: "Utilizator inexistent.",
+        });
+      }
+
+      const userId = userResult.rows[0].id;
+
+      const idFrontPath = req.files.idFront[0].path;
+      const idBackPath = req.files.idBack[0].path;
+      const selfiePath = req.files.selfie[0].path;
+
+      const now = new Date();
+
+      const insertKycSql = `
+        INSERT INTO kyc_submissions
+          (user_id, email, full_name, cnp, address, iban, phone,
+           id_front_path, id_back_path, selfie_path, status, created_at, updated_at)
+        VALUES
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING id, status
+      `;
+
+      await pool.query(insertKycSql, [
+        userId,
+        email,
+        fullName,
+        cnp,
+        address,
+        iban,
+        phone,
+        idFrontPath,
+        idBackPath,
+        selfiePath,
+        "pending",
+        now,
+        now,
+      ]);
+
+      await pool.query(
+        "UPDATE users SET kyc_status = $1, updated_at = $2 WHERE id = $3",
+        ["pending", now, userId]
+      );
+
+      console.log("KYC submission stored for:", email);
+
+      return res.json({
+        success: true,
+        status: "pending",
+        message: "KYC trimis cu succes. Status: pending.",
+      });
+    } catch (err) {
+      console.error("ERROR /api/kyc/submit:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Eroare internă de server la KYC submit.",
+        details: err.message,
+        code: err.code || null,
+      });
+    }
+  }
+);
 
 const PORT = process.env.PORT || 8080;
 
