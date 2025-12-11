@@ -37,7 +37,10 @@ const kycStorage = multer.diskStorage({
     cb(null, kycUploadDir);
   },
   filename: (req, file, cb) => {
-    const email = (req.body.email || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_");
+    const email = (req.body.email || "unknown").replace(
+      /[^a-zA-Z0-9._-]/g,
+      "_"
+    );
     const ext = path.extname(file.originalname || "");
     const field = file.fieldname;
     const ts = Date.now();
@@ -334,15 +337,20 @@ app.get("/api/kyc/status", async (req, res) => {
 });
 
 // === KYC: submit ===
+// compatibil cu frontend-ul tău: câmpuri text + fișiere (idFront, idBack, selfie, contractSigned)
 app.post(
   "/api/kyc/submit",
   kycUpload.fields([
     { name: "idFront", maxCount: 1 },
     { name: "idBack", maxCount: 1 },
     { name: "selfie", maxCount: 1 },
+    { name: "contractSigned", maxCount: 1 },
   ]),
   async (req, res) => {
     try {
+      const body = req.body || {};
+      const files = req.files || {};
+
       const {
         email,
         fullName,
@@ -350,30 +358,45 @@ app.post(
         address,
         iban,
         phone,
-        contractAccepted,
-      } = req.body || {};
+        status: frontendStatus,
+        kyc_status: frontendKycStatus,
+      } = body;
 
+      // Validare câmpuri text obligatorii
       if (!email || !fullName || !cnp || !address || !iban || !phone) {
         return res.status(400).json({
           success: false,
-          error: "Lipsesc câmpuri obligatorii.",
+          error:
+            "Lipsesc câmpuri obligatorii: email, fullName, cnp, address, iban sau phone.",
         });
       }
 
-      if (!req.files || !req.files.idFront || !req.files.idBack || !req.files.selfie) {
+      // Validare fișiere obligatorii
+      if (
+        !files.idFront ||
+        !files.idFront[0] ||
+        !files.idBack ||
+        !files.idBack[0] ||
+        !files.selfie ||
+        !files.selfie[0]
+      ) {
         return res.status(400).json({
           success: false,
           error: "Lipsesc pozele (față, verso buletin sau selfie).",
         });
       }
 
-      if (contractAccepted !== "true") {
-        return res.status(400).json({
-          success: false,
-          error: "Contractul nu este acceptat.",
-        });
-      }
+      // contractSigned e optional pentru backend (dar în UI e required)
+      const idFrontPath = files.idFront[0].path;
+      const idBackPath = files.idBack[0].path;
+      const selfiePath = files.selfie[0].path;
+      // lăsăm contractul doar pe disk, fără să-l băgăm acum în DB
+      const contractPath =
+        files.contractSigned && files.contractSigned[0]
+          ? files.contractSigned[0].path
+          : null;
 
+      // Căutăm user-ul
       const userResult = await pool.query(
         "SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
         [email]
@@ -387,13 +410,9 @@ app.post(
       }
 
       const userId = userResult.rows[0].id;
-
-      const idFrontPath = req.files.idFront[0].path;
-      const idBackPath = req.files.idBack[0].path;
-      const selfiePath = req.files.selfie[0].path;
-
       const now = new Date();
 
+      // Inserăm KYC nou în kyc_submissions
       const insertKycSql = `
         INSERT INTO kyc_submissions
           (user_id, email, full_name, cnp, address, iban, phone,
@@ -403,7 +422,7 @@ app.post(
         RETURNING id, status
       `;
 
-      await pool.query(insertKycSql, [
+      const kycResult = await pool.query(insertKycSql, [
         userId,
         email,
         fullName,
@@ -419,16 +438,23 @@ app.post(
         now,
       ]);
 
+      // Updatăm users.kyc_status = 'pending'
       await pool.query(
         "UPDATE users SET kyc_status = $1, updated_at = $2 WHERE id = $3",
         ["pending", now, userId]
       );
 
       console.log("KYC submission stored for:", email);
+      console.log(
+        "Fișiere primite:",
+        Object.keys(files)
+          .map((k) => `${k}(${files[k].length})`)
+          .join(", ")
+      );
 
       return res.json({
         success: true,
-        status: "pending",
+        status: kycResult.rows[0].status,
         message: "KYC trimis cu succes. Status: pending.",
       });
     } catch (err) {
