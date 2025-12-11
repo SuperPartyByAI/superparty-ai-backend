@@ -72,7 +72,7 @@ function verifyPassword(password, stored) {
   }
 }
 
-// Funcție pentru inițializarea tabelelor
+// Funcție pentru inițializarea tabelelor + aliniere coloane
 async function initDb() {
   const createUsersSql = `
     CREATE TABLE IF NOT EXISTS users (
@@ -103,23 +103,88 @@ async function initDb() {
       id_front_path TEXT NOT NULL,
       id_back_path TEXT NOT NULL,
       selfie_path TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending', -- pending / approved / rejected
+      status TEXT NOT NULL DEFAULT 'pending',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `;
 
+  // Cream tabelele daca nu exista
   await pool.query(createUsersSql);
   await pool.query(createKycSql);
 
-  console.log("Tabelele 'users' și 'kyc_submissions' sunt pregătite.");
+  // Aliniem structura users (daca tabela exista de mai demult)
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`
+  );
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'angajat';`
+  );
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_admin';`
+  );
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_status TEXT NOT NULL DEFAULT 'not_started';`
+  );
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT false;`
+  );
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`
+  );
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`
+  );
+
+  // Aliniem structura kyc_submissions (daca tabela exista deja, dar fara toate coloanele)
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS full_name TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS cnp TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS iban TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_front_path TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_back_path TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS selfie_path TEXT NOT NULL DEFAULT '';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`
+  );
+  await pool.query(
+    `ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`
+  );
+
+  console.log("Tabelele 'users' și 'kyc_submissions' sunt pregătite și aliniate.");
 }
 
 // Healthcheck
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
-    res.json({
+  res.json({
       status: "ok",
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
@@ -337,7 +402,6 @@ app.get("/api/kyc/status", async (req, res) => {
 });
 
 // === KYC: submit ===
-// compatibil cu frontend-ul tău: câmpuri text + fișiere (idFront, idBack, selfie, contractSigned)
 app.post(
   "/api/kyc/submit",
   kycUpload.fields([
@@ -386,11 +450,9 @@ app.post(
         });
       }
 
-      // contractSigned e optional pentru backend (dar în UI e required)
       const idFrontPath = files.idFront[0].path;
       const idBackPath = files.idBack[0].path;
       const selfiePath = files.selfie[0].path;
-      // lăsăm contractul doar pe disk, fără să-l băgăm acum în DB
       const contractPath =
         files.contractSigned && files.contractSigned[0]
           ? files.contractSigned[0].path
