@@ -2,11 +2,14 @@
   "name": "superparty-backend",
   "version": "1.0.0",
   "description": "SuperParty backend - auth + API",
+  "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node server.js"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",

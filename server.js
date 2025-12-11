@@ -1,14 +1,13 @@
-// server.js
-// Backend real pentru SuperParty - Railway
+// server.js - SuperParty backend (ESM)
 
-require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
-const { Pool } = require("pg");
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+import pkg from "pg";
 
-const app = express();
+const { Pool } = pkg;
 
 // ====== CONFIG ======
 const PORT = process.env.PORT || 3000;
@@ -25,6 +24,8 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+const app = express();
+
 // ====== MIDDLEWARE ======
 app.use(express.json());
 
@@ -35,7 +36,7 @@ app.use(
   })
 );
 
-// ====== HEALTHCHECK (trebuie să meargă și local, și pe Railway) ======
+// ====== HEALTHCHECK ======
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
@@ -64,11 +65,10 @@ app.post("/api/auth/register", async (req, res) => {
     if (!fullName || !email || !phone || !password) {
       return res.status(400).json({
         success: false,
-        error: "Toate câmpurile sunt obligatorii.",
+        error: "Te rog completează toate câmpurile.",
       });
     }
 
-    // Verificare email existent
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1 LIMIT 1",
       [email.toLowerCase()]
@@ -81,10 +81,8 @@ app.post("/api/auth/register", async (req, res) => {
       });
     }
 
-    // Hash parolă
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Inserare user
     const result = await pool.query(
       `
       INSERT INTO users (full_name, email, phone, password_hash, role, kyc_status, is_approved)
