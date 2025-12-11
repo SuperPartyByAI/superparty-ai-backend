@@ -17,15 +17,13 @@ app.use(express.json());
 // Verificăm că avem DATABASE_URL
 if (!process.env.DATABASE_URL) {
   console.error("ERROR: Lipseste DATABASE_URL in environment!");
-  process.exit(1);
+  // NU mai facem process.exit aici, doar logăm
 }
 
-// Pool Postgres
+// Pool Postgres – config simplu, compatibil Railway
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL.includes("sslmode=require")
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl: { rejectUnauthorized: false },
 });
 
 // === Configurare upload fișiere KYC ===
@@ -71,127 +69,132 @@ function verifyPassword(password, stored) {
 
 // Funcție pentru inițializarea tabelelor + aliniere coloane
 async function initDb() {
-  const createUsersSql = `
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      full_name TEXT NOT NULL,
-      email TEXT NOT NULL UNIQUE,
-      phone TEXT,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'angajat',
-      status TEXT NOT NULL DEFAULT 'pending_admin',
-      kyc_status TEXT NOT NULL DEFAULT 'not_started',
-      is_approved BOOLEAN NOT NULL DEFAULT false,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `;
+  try {
+    const createUsersSql = `
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        phone TEXT,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'angajat',
+        status TEXT NOT NULL DEFAULT 'pending_admin',
+        kyc_status TEXT NOT NULL DEFAULT 'not_started',
+        is_approved BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `;
 
-  const createKycSql = `
-    CREATE TABLE IF NOT EXISTS kyc_submissions (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      email TEXT NOT NULL,
-      full_name TEXT NOT NULL,
-      cnp TEXT NOT NULL,
-      address TEXT NOT NULL,
-      iban TEXT NOT NULL,
-      phone TEXT NOT NULL,
-      id_front_path TEXT NOT NULL,
-      id_back_path TEXT NOT NULL,
-      selfie_path TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `;
+    const createKycSql = `
+      CREATE TABLE IF NOT EXISTS kyc_submissions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        email TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        cnp TEXT NOT NULL,
+        address TEXT NOT NULL,
+        iban TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        id_front_path TEXT NOT NULL,
+        id_back_path TEXT NOT NULL,
+        selfie_path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `;
 
-  // Cream tabelele daca nu exista
-  await pool.query(createUsersSql);
-  await pool.query(createKycSql);
+    // Cream tabelele daca nu exista
+    await pool.query(createUsersSql);
+    await pool.query(createKycSql);
 
-  // Aliniem structura users
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`);
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'angajat';
-  `);
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_admin';
-  `);
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS kyc_status TEXT NOT NULL DEFAULT 'not_started';
-  `);
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT false;
-  `);
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-  `);
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-  `);
+    // Aliniem structura users
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'angajat';
+    `);
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_admin';
+    `);
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS kyc_status TEXT NOT NULL DEFAULT 'not_started';
+    `);
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT false;
+    `);
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    `);
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    `);
 
-  // Aliniem structura kyc_submissions
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS full_name TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS cnp TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS iban TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS id_front_path TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS id_back_path TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS selfie_path TEXT NOT NULL DEFAULT '';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-  `);
-  await pool.query(`
-    ALTER TABLE kyc_submissions
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-  `);
+    // Aliniem structura kyc_submissions
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS full_name TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS cnp TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS iban TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS id_front_path TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS id_back_path TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS selfie_path TEXT NOT NULL DEFAULT '';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    `);
+    await pool.query(`
+      ALTER TABLE kyc_submissions
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    `);
 
-  console.log("Tabelele 'users' și 'kyc_submissions' sunt pregătite și aliniate.");
+    console.log("Tabelele 'users' și 'kyc_submissions' sunt pregătite și aliniate.");
+  } catch (err) {
+    console.error("Eroare la initDb:", err);
+    // Nu mai dăm process.exit, doar logăm; aplicația pornește oricum
+  }
 }
 
 // Healthcheck
@@ -205,7 +208,11 @@ app.get("/health", async (req, res) => {
     });
   } catch (err) {
     console.error("Healthcheck DB error:", err);
-    res.status(500).json({ status: "error", error: "DB connection error" });
+    res.status(500).json({
+      status: "error",
+      error: "DB connection error",
+      details: err.message,
+    });
   }
 });
 
@@ -262,7 +269,7 @@ app.post("/api/auth/register", async (req, res) => {
       VALUES
         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING id, full_name, email, phone, role, status, kyc_status, is_approved, created_at, updated_at
-    `;
+   `;
 
     const values = [
       fullName,
@@ -688,13 +695,9 @@ app.post("/api/admin/kyc/approve", async (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 
-initDb()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`SuperParty backend running on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Eroare la initDb:", err);
-    process.exit(1);
-  });
+// Inițializăm DB (fără să mai oprim aplicația dacă pică)
+initDb();
+
+app.listen(PORT, () => {
+  console.log(`SuperParty backend running on port ${PORT}`);
+});
