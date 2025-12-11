@@ -666,7 +666,7 @@ app.post("/api/admin/kyc/approve", async (req, res) => {
       );
 
       await pool.query(
-        "UPDATE kyc_submissions SET status = $1, updated_at = $2 WHERE id = $3`,
+        "UPDATE kyc_submissions SET status = $1, updated_at = $2 WHERE id = $3",
         ["rejected", now, kycId]
       );
 
