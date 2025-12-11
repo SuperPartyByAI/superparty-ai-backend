@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
-const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 
 const app = express();
 
@@ -24,6 +24,28 @@ const pool = new Pool({
     ? { rejectUnauthorized: false }
     : false,
 });
+
+// Helperi pentru parole (fără bcrypt, doar crypto built-in)
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  try {
+    const [salt, hash] = stored.split(":");
+    if (!salt || !hash) return false;
+
+    const hashedBuffer = crypto.scryptSync(password, salt, 64);
+    const hashBuffer = Buffer.from(hash, "hex");
+
+    if (hashedBuffer.length !== hashBuffer.length) return false;
+    return crypto.timingSafeEqual(hashedBuffer, hashBuffer);
+  } catch {
+    return false;
+  }
+}
 
 // Funcție pentru inițializarea tabelei users
 async function initDb() {
@@ -107,7 +129,7 @@ app.post("/api/auth/register", async (req, res) => {
         .json({ success: false, error: "Există deja un cont cu acest email." });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = hashPassword(password);
     const now = new Date();
 
     const insertSql = `
@@ -176,8 +198,8 @@ app.post("/api/auth/login", async (req, res) => {
     }
 
     const user = result.rows[0];
-    const isMatch = await bcrypt.compare(password, user.password_hash);
 
+    const isMatch = verifyPassword(password, user.password_hash);
     if (!isMatch) {
       return res
         .status(401)
