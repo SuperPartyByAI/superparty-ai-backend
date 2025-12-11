@@ -1,4 +1,3 @@
-BEGIN_SERVER_JS
 require("dotenv").config();
 
 const express = require("express");
@@ -215,4 +214,3 @@ initDb()
     console.error("Eroare la initDb:", err);
     process.exit(1);
   });
-END_SERVER_JS
