@@ -13,7 +13,7 @@ app.use(express.json({ limit: "25mb" }));
 // Railway: trebuie PORT din env. Local: fallback 3000.
 const PORT = Number(process.env.PORT || 3000);
 
-// Pune JWT_SECRET în Railway → Variables
+// Pune JWT_SECRET în Railway → Variables (obligatoriu în prod)
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_JWT_SECRET";
 
 // DB
@@ -221,6 +221,46 @@ app.get("/health-contract", async (req, res) => {
 });
 
 // ===============================
+// TEMP: Reset password (PROTEJAT CU SECRET)
+// Folosește o dată, apoi șterge endpoint-ul.
+// Necesită env: RESET_PASSWORD_SECRET
+// ===============================
+app.post("/api/admin/reset-password", async (req, res) => {
+  try {
+    const secret = String(req.body?.secret || "");
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const newPassword = String(req.body?.newPassword || "");
+
+    if (!process.env.RESET_PASSWORD_SECRET) {
+      return res.status(500).json({ success: false, error: "RESET_PASSWORD_SECRET not set" });
+    }
+    if (secret !== process.env.RESET_PASSWORD_SECRET) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    if (!email || !newPassword) {
+      return res.status(400).json({ success: false, error: "Missing email/newPassword" });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    const upd = await pool.query(
+      `UPDATE users
+       SET password_hash=$1, password=NULL
+       WHERE LOWER(email)=LOWER($2)
+       RETURNING id, email`,
+      [hash, email]
+    );
+
+    if (!upd.rowCount) return res.status(404).json({ success: false, error: "User not found" });
+
+    return res.json({ success: true, user: upd.rows[0] });
+  } catch (e) {
+    console.error("ERROR /api/admin/reset-password:", e);
+    return res.status(500).json({ success: false, error: "Eroare internă." });
+  }
+});
+
+// ===============================
 // AUTH
 // ===============================
 app.post("/api/auth/register", async (req, res) => {
@@ -283,7 +323,7 @@ app.post("/api/auth/login", async (req, res) => {
       } catch (_) {
         ok = false;
       }
-      if (!ok && String(user.password_hash) === password) ok = true; // legacy
+      if (!ok && String(user.password_hash) === password) ok = true; // legacy plain in hash
     }
 
     if (!ok && user.password) {
