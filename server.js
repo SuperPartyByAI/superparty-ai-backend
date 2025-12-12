@@ -10,10 +10,10 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
 
-// Railway: trebuie PORT din env. Local: fallback 3000.
+// Railway: PORT din env. Local fallback 3000.
 const PORT = Number(process.env.PORT || 3000);
 
-// Pune JWT_SECRET în Railway → Variables (obligatoriu în prod)
+// Pune JWT_SECRET în Railway → Variables (OBLIGATORIU în prod)
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_JWT_SECRET";
 
 // DB
@@ -146,9 +146,10 @@ function isSixMonthsValid(uploadedAt) {
 }
 
 // ===============================
-// Schema (idempotent)
+// Schema (idempotent) — NU creează coloana "password"
 // ===============================
 async function ensureSchema() {
+  // users (fără "password" ca să nu rupi schema existentă)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -158,10 +159,16 @@ async function ensureSchema() {
       role TEXT NOT NULL DEFAULT 'angajat',
       status TEXT NOT NULL DEFAULT 'kyc_required',
       password_hash TEXT,
-      password TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  // asigură password_hash dacă tabela e veche
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT;`);
+  await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'angajat';`);
+  await pool.query(`ALTER TABLE users ALTER COLUMN status SET DEFAULT 'kyc_required';`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
@@ -210,7 +217,6 @@ async function ensureSchema() {
 // Health
 // ===============================
 app.get("/health", (req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
-
 app.get("/health-contract", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -222,8 +228,7 @@ app.get("/health-contract", async (req, res) => {
 
 // ===============================
 // TEMP: Reset password (PROTEJAT CU SECRET)
-// Folosește o dată, apoi șterge endpoint-ul.
-// Necesită env: RESET_PASSWORD_SECRET
+// Necesită Railway env: RESET_PASSWORD_SECRET
 // ===============================
 app.post("/api/admin/reset-password", async (req, res) => {
   try {
@@ -243,9 +248,10 @@ app.post("/api/admin/reset-password", async (req, res) => {
 
     const hash = await bcrypt.hash(newPassword, 10);
 
+    // IMPORTANT: doar password_hash (fără password=NULL)
     const upd = await pool.query(
       `UPDATE users
-       SET password_hash=$1, password=NULL
+       SET password_hash=$1
        WHERE LOWER(email)=LOWER($2)
        RETURNING id, email`,
       [hash, email]
@@ -293,7 +299,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// LOGIN — compatibil cu parole vechi (plain) + bcrypt
+// LOGIN — bcrypt + legacy (dacă cineva a pus parola direct în password_hash)
 app.post("/api/auth/login", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -304,7 +310,7 @@ app.post("/api/auth/login", async (req, res) => {
     }
 
     const q = await pool.query(
-      `SELECT id, full_name, email, phone, role, status, password_hash, password
+      `SELECT id, full_name, email, phone, role, status, password_hash
        FROM users
        WHERE LOWER(email)=LOWER($1)
        LIMIT 1`,
@@ -316,18 +322,13 @@ app.post("/api/auth/login", async (req, res) => {
     const user = q.rows[0];
 
     let ok = false;
-
     if (user.password_hash) {
       try {
         ok = await bcrypt.compare(password, String(user.password_hash));
       } catch (_) {
         ok = false;
       }
-      if (!ok && String(user.password_hash) === password) ok = true; // legacy plain in hash
-    }
-
-    if (!ok && user.password) {
-      if (String(user.password) === password) ok = true; // legacy plain
+      if (!ok && String(user.password_hash) === password) ok = true;
     }
 
     if (!ok) return res.status(401).json({ success: false, error: "Invalid credentials" });
@@ -405,8 +406,8 @@ app.get("/api/kyc/doc-status", async (req, res) => {
           : null,
         record: row && row.criminal_record_path
           ? { path: row.criminal_record_path, uploadedAt: row.criminal_record_uploaded_at, valid: recordValid }
-          : null
-      }
+          : null,
+      },
     });
   } catch (e) {
     console.error(e);
@@ -551,7 +552,6 @@ app.post("/api/contract/accept", async (req, res) => {
     app.listen(PORT, () => console.log(`REAL backend running on port ${PORT}`));
   } catch (e) {
     console.error("ensureSchema error:", e.message || e);
-    // Pornește oricum (în caz de DB problem local)
     app.listen(PORT, () => console.log(`REAL backend running on port ${PORT} (schema may not be ready)`));
   }
 })();
