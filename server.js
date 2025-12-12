@@ -10,10 +10,10 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
 
-// Railway: PORT este obligatoriu. Local: cade pe 8090.
-const PORT = Number(process.env.PORT || 8090);
+// Railway: trebuie PORT din env. Local: fallback 3000.
+const PORT = Number(process.env.PORT || 3000);
 
-// IMPORTANT: pune JWT_SECRET în Railway Variables
+// Pune JWT_SECRET în Railway → Variables
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_JWT_SECRET";
 
 // DB
@@ -25,9 +25,9 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-// =========================================
-// Helpers: JWT
-// =========================================
+// ===============================
+// JWT helpers
+// ===============================
 function signJwt(user) {
   return jwt.sign(
     {
@@ -69,16 +69,13 @@ function requireRole(roles) {
   };
 }
 
-// =========================================
-// Helpers: Contract cycle (Bucharest)
-// =========================================
+// ===============================
+// Contract cycle helpers (Bucharest)
+// ===============================
 const TZ = "Europe/Bucharest";
 
 function tzOffsetMinutes(date, timeZone) {
-  const s = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    timeZoneName: "shortOffset",
-  }).format(date);
+  const s = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).format(date);
   const m = s.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
   if (!m) return 0;
   const sign = m[1] === "-" ? -1 : 1;
@@ -105,11 +102,7 @@ function getBucharestYMD(now = new Date()) {
   }).formatToParts(now);
 
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
-  return {
-    y: parseInt(map.year, 10),
-    m: parseInt(map.month, 10),
-    d: parseInt(map.day, 10),
-  };
+  return { y: parseInt(map.year, 10), m: parseInt(map.month, 10), d: parseInt(map.day, 10) };
 }
 
 function getContractCycle(now = new Date()) {
@@ -135,7 +128,6 @@ function getContractCycle(now = new Date()) {
 
   const cycleStart = makeDateInTZ(startY, startM, 15, 0, 0, 0, 0, TZ);
   const cycleEnd = makeDateInTZ(endY, endM, 14, 23, 59, 59, 999, TZ);
-
   return { cycleStart, cycleEnd };
 }
 
@@ -153,11 +145,10 @@ function isSixMonthsValid(uploadedAt) {
   return new Date() < exp;
 }
 
-// =========================================
-// Schema (safe idempotent)
-// =========================================
+// ===============================
+// Schema (idempotent)
+// ===============================
 async function ensureSchema() {
-  // users (minimal pentru auth)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -167,11 +158,11 @@ async function ensureSchema() {
       role TEXT NOT NULL DEFAULT 'angajat',
       status TEXT NOT NULL DEFAULT 'kyc_required',
       password_hash TEXT,
+      password TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 
-  // kyc_submissions (minimal + câmpuri doc)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
       id SERIAL PRIMARY KEY,
@@ -188,7 +179,6 @@ async function ensureSchema() {
     );
   `);
 
-  // contract_acceptances
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_acceptances (
       id SERIAL PRIMARY KEY,
@@ -208,7 +198,6 @@ async function ensureSchema() {
     ON contract_acceptances(user_id, cycle_start, cycle_end);
   `);
 
-  // ALTER idempotent (dacă tabelul exista deja)
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_path TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_uploaded_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS driver_license_path TEXT;`);
@@ -217,9 +206,9 @@ async function ensureSchema() {
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_uploaded_at TIMESTAMPTZ;`);
 }
 
-// =========================================
+// ===============================
 // Health
-// =========================================
+// ===============================
 app.get("/health", (req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
 
 app.get("/health-contract", async (req, res) => {
@@ -231,9 +220,9 @@ app.get("/health-contract", async (req, res) => {
   }
 });
 
-// =========================================
-// AUTH (REAL) — asta îți rezolvă token: null
-// =========================================
+// ===============================
+// AUTH
+// ===============================
 app.post("/api/auth/register", async (req, res) => {
   try {
     const full_name = String(req.body?.full_name || "").trim();
@@ -264,6 +253,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+// LOGIN — compatibil cu parole vechi (plain) + bcrypt
 app.post("/api/auth/login", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -273,24 +263,38 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ success: false, error: "Missing email/password" });
     }
 
-    const u = await pool.query(
-      `SELECT id, full_name, email, phone, role, status, password_hash
+    const q = await pool.query(
+      `SELECT id, full_name, email, phone, role, status, password_hash, password
        FROM users
        WHERE LOWER(email)=LOWER($1)
        LIMIT 1`,
       [email]
     );
 
-    if (!u.rowCount) return res.status(401).json({ success: false, error: "Invalid credentials" });
+    if (!q.rowCount) return res.status(401).json({ success: false, error: "Invalid credentials" });
 
-    const user = u.rows[0];
-    const ok = await bcrypt.compare(password, user.password_hash || "");
+    const user = q.rows[0];
+
+    let ok = false;
+
+    if (user.password_hash) {
+      try {
+        ok = await bcrypt.compare(password, String(user.password_hash));
+      } catch (_) {
+        ok = false;
+      }
+      if (!ok && String(user.password_hash) === password) ok = true; // legacy
+    }
+
+    if (!ok && user.password) {
+      if (String(user.password) === password) ok = true; // legacy plain
+    }
+
     if (!ok) return res.status(401).json({ success: false, error: "Invalid credentials" });
 
-    // AICI e fix-ul: token NU mai e null
     const token = signJwt(user);
 
-    res.json({
+    return res.json({
       success: true,
       user: {
         id: user.id,
@@ -304,25 +308,19 @@ app.post("/api/auth/login", async (req, res) => {
     });
   } catch (e) {
     console.error("ERROR /api/auth/login:", e);
-    res.status(500).json({ success: false, error: "Eroare internă." });
+    return res.status(500).json({ success: false, error: "Eroare internă." });
   }
 });
 
-// =========================================
-// KYC submit (set status -> kyc_pending)
-// =========================================
+// ===============================
+// KYC
+// ===============================
 app.post("/api/kyc/submit", requireAuth, async (req, res) => {
   try {
     const payload = req.body?.payload ?? {};
     const userId = Number(req.user.id);
 
-    // insert submission
-    await pool.query(
-      `INSERT INTO kyc_submissions(user_id,status,payload) VALUES ($1,'pending',$2)`,
-      [userId, payload]
-    );
-
-    // update user status
+    await pool.query(`INSERT INTO kyc_submissions(user_id,status,payload) VALUES ($1,'pending',$2)`, [userId, payload]);
     await pool.query(`UPDATE users SET status='kyc_pending' WHERE id=$1`, [userId]);
 
     res.json({ success: true, message: "KYC trimis. Așteaptă aprobare admin.", status: "kyc_pending" });
@@ -332,7 +330,6 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
   }
 });
 
-// KYC doc status (minor + sofer + cazier valid 6 luni)
 app.get("/api/kyc/doc-status", async (req, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
@@ -377,9 +374,9 @@ app.get("/api/kyc/doc-status", async (req, res) => {
   }
 });
 
-// =========================================
+// ===============================
 // ADMIN KYC
-// =========================================
+// ===============================
 app.get("/api/admin/kyc/list", requireRole(["admin"]), async (req, res) => {
   try {
     const q = await pool.query(
@@ -430,9 +427,9 @@ app.post("/api/admin/kyc/reject", requireRole(["admin"]), async (req, res) => {
   }
 });
 
-// =========================================
-// CONTRACT status/accept (păstrat)
-// =========================================
+// ===============================
+// CONTRACT
+// ===============================
 app.get("/api/contract/status", async (req, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
@@ -505,14 +502,16 @@ app.post("/api/contract/accept", async (req, res) => {
   }
 });
 
-// =========================================
+// ===============================
 // Start
-// =========================================
-ensureSchema()
-  .then(() => {
+// ===============================
+(async () => {
+  try {
+    await ensureSchema();
     app.listen(PORT, () => console.log(`REAL backend running on port ${PORT}`));
-  })
-  .catch((e) => {
-    console.error("ensureSchema error:", e);
+  } catch (e) {
+    console.error("ensureSchema error:", e.message || e);
+    // Pornește oricum (în caz de DB problem local)
     app.listen(PORT, () => console.log(`REAL backend running on port ${PORT} (schema may not be ready)`));
-  });
+  }
+})();
