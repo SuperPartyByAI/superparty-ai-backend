@@ -10,20 +10,25 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
 
-// Railway: PORT din env. Local fallback 3000.
 const PORT = Number(process.env.PORT || 3000);
-
-// Pune JWT_SECRET în Railway → Variables (OBLIGATORIU în prod)
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_JWT_SECRET";
 
-// DB
 if (!process.env.DATABASE_URL) {
   console.error("ERROR: Lipseste DATABASE_URL in environment!");
 }
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
+
+// Build info (ca să confirmi că Railway rulează ultima versiune)
+const BUILD_SHA =
+  process.env.RAILWAY_GIT_COMMIT_SHA ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.RENDER_GIT_COMMIT ||
+  "unknown";
+const BOOT_TS = new Date().toISOString();
 
 // ===============================
 // JWT helpers
@@ -147,11 +152,8 @@ function isSixMonthsValid(uploadedAt) {
 
 // ===============================
 // Schema (idempotent)
-// IMPORTANT: kyc_submissions există deja la tine cu multe coloane.
-// Noi o facem "superset" + ALTER-uri idempotente.
 // ===============================
 async function ensureSchema() {
-  // users
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -165,20 +167,18 @@ async function ensureSchema() {
     );
   `);
 
-  // asigură coloane users (cazuri vechi)
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT;`);
   await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'angajat';`);
   await pool.query(`ALTER TABLE users ALTER COLUMN status SET DEFAULT 'kyc_required';`);
 
-  // kyc_submissions: superset (include legacy + payload)
+  // IMPORTANT: DB-ul tău existent are deja o kyc_submissions "legacy".
+  // Noi doar asigurăm coloanele necesare fără să stricăm ce există.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-
-      -- legacy fields (din tabela ta existentă)
       email TEXT,
       full_name TEXT,
       cnp TEXT,
@@ -188,26 +188,19 @@ async function ensureSchema() {
       id_front_path TEXT,
       id_back_path TEXT,
       selfie_path TEXT,
-
-      -- status + timestamps
       status TEXT NOT NULL DEFAULT 'pending',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-      -- docs
       parent_consent_path TEXT,
       parent_consent_uploaded_at TIMESTAMPTZ,
       driver_license_path TEXT,
       driver_license_uploaded_at TIMESTAMPTZ,
       criminal_record_path TEXT,
       criminal_record_uploaded_at TIMESTAMPTZ,
-
-      -- new payload
       payload JSONB
     );
   `);
 
-  // idempotent ALTER: adaugă ce poate lipsi în DB-ul existent
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS email TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS full_name TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS cnp TEXT;`);
@@ -228,14 +221,12 @@ async function ensureSchema() {
 
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS payload JSONB;`);
 
-  // dacă payload exista dar era TEXT, încearcă conversie la JSONB (safe)
   try {
     await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`);
   } catch (e) {
     console.error("WARN ensureSchema: cannot alter kyc_submissions.payload to JSONB:", e?.message || e);
   }
 
-  // contract_acceptances
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_acceptances (
       id SERIAL PRIMARY KEY,
@@ -257,9 +248,21 @@ async function ensureSchema() {
 }
 
 // ===============================
-// Health
+// Health / debug
 // ===============================
-app.get("/health", (req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
+app.get("/health", (req, res) =>
+  res.json({
+    status: "ok",
+    ts: new Date().toISOString(),
+    bootTs: BOOT_TS,
+    build: BUILD_SHA,
+  })
+);
+
+// vezi exact ce e în token (debug)
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  res.json({ success: true, tokenUser: req.user });
+});
 
 // ===============================
 // ADMIN: migrate (protejat cu RESET_PASSWORD_SECRET)
@@ -275,7 +278,6 @@ app.post("/api/admin/migrate", async (req, res) => {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
 
-    // Asigură superset-ul de coloane (idempotent)
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS payload JSONB;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS email TEXT;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS full_name TEXT;`);
@@ -295,12 +297,9 @@ app.post("/api/admin/migrate", async (req, res) => {
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_path TEXT;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_uploaded_at TIMESTAMPTZ;`);
 
-    // încearcă payload -> jsonb dacă era text
     try {
       await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`);
-    } catch (e) {
-      // nu blocăm migrate dacă nu poate
-    }
+    } catch (_) {}
 
     return res.json({ success: true, message: "migrate_ok" });
   } catch (e) {
@@ -311,7 +310,6 @@ app.post("/api/admin/migrate", async (req, res) => {
 
 // ===============================
 // TEMP: Reset password (PROTEJAT CU SECRET)
-// Necesită Railway env: RESET_PASSWORD_SECRET
 // ===============================
 app.post("/api/admin/reset-password", async (req, res) => {
   try {
@@ -409,7 +407,6 @@ app.post("/api/auth/login", async (req, res) => {
       } catch (_) {
         ok = false;
       }
-      // legacy fallback (dacă cineva a pus parola direct în password_hash)
       if (!ok && String(user.password_hash) === password) ok = true;
     }
 
@@ -437,25 +434,32 @@ app.post("/api/auth/login", async (req, res) => {
 
 // ===============================
 // KYC
-// IMPORTANT: DB-ul tău are email NOT NULL (din schema veche) => inserăm email din JWT.
-// În plus, populăm și coloanele legacy (full_name/cnp/address/iban/phone) ca să nu se mai rupă nimic.
+// FIX CRITIC: email NU mai poate ajunge NULL.
+// - îl ia din token, iar dacă lipsește, îl ia din DB (users)
+// - îl inserează explicit în kyc_submissions (email NOT NULL în DB-ul tău)
 // ===============================
 app.post("/api/kyc/submit", requireAuth, async (req, res) => {
   try {
-    // Acceptă:
-    // 1) { payload: {...} }
-    // 2) { fullName, cnp, ... } (root)
     const raw = req.body || {};
     const payloadObj =
       raw && typeof raw === "object" && raw.payload && typeof raw.payload === "object" ? raw.payload : raw;
 
     const userId = Number(req.user.id);
-    const email = String(req.user.email || "").trim().toLowerCase();
+
+    // 1) email din token
+    let email = String(req.user.email || "").trim().toLowerCase();
+
+    // 2) fallback: email din DB (dacă tokenul nu are email)
     if (!email) {
-      return res.status(400).json({ success: false, error: "Missing user email in token" });
+      const qe = await pool.query(`SELECT email FROM users WHERE id=$1 LIMIT 1`, [userId]);
+      email = qe.rowCount ? String(qe.rows[0].email || "").trim().toLowerCase() : "";
     }
 
-    // ia nume/telefon din users pentru fallback
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Cannot resolve email for user" });
+    }
+
+    // fallback name/phone din DB
     const u = await pool.query(`SELECT full_name, phone FROM users WHERE id=$1 LIMIT 1`, [userId]);
     const fullNameDb = u.rowCount ? String(u.rows[0].full_name || "").trim() : "";
     const phoneDb = u.rowCount ? String(u.rows[0].phone || "").trim() : "";
