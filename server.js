@@ -80,10 +80,7 @@ function requireRole(roles) {
 const TZ = "Europe/Bucharest";
 
 function tzOffsetMinutes(date, timeZone) {
-  const s = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    timeZoneName: "shortOffset",
-  }).format(date);
+  const s = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).format(date);
   const m = s.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
   if (!m) return 0;
   const sign = m[1] === "-" ? -1 : 1;
@@ -110,11 +107,7 @@ function getBucharestYMD(now = new Date()) {
   }).formatToParts(now);
 
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
-  return {
-    y: parseInt(map.year, 10),
-    m: parseInt(map.month, 10),
-    d: parseInt(map.day, 10),
-  };
+  return { y: parseInt(map.year, 10), m: parseInt(map.month, 10), d: parseInt(map.day, 10) };
 }
 
 function getContractCycle(now = new Date()) {
@@ -178,14 +171,10 @@ async function ensureSchema() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT;`);
-  try {
-    await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'angajat';`);
-  } catch (_) {}
-  try {
-    await pool.query(`ALTER TABLE users ALTER COLUMN status SET DEFAULT 'kyc_required';`);
-  } catch (_) {}
+  try { await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'angajat';`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE users ALTER COLUMN status SET DEFAULT 'kyc_required';`); } catch (_) {}
 
-  // kyc_submissions: pastram schema legacy + adaugam payload
+  // kyc_submissions: legacy + payload
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
       id SERIAL PRIMARY KEY,
@@ -223,7 +212,6 @@ async function ensureSchema() {
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_front_path TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_back_path TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS selfie_path TEXT;`);
-
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;`);
 
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_path TEXT;`);
@@ -243,15 +231,9 @@ async function ensureSchema() {
   }
 
   // IMPORTANT: daca legacy DB are NOT NULL pe doc paths, il relaxam
-  try {
-    await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_front_path DROP NOT NULL;`);
-  } catch (_) {}
-  try {
-    await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_back_path DROP NOT NULL;`);
-  } catch (_) {}
-  try {
-    await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN selfie_path DROP NOT NULL;`);
-  } catch (_) {}
+  try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_front_path DROP NOT NULL;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_back_path DROP NOT NULL;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN selfie_path DROP NOT NULL;`); } catch (_) {}
 
   // contract_acceptances
   await pool.query(`
@@ -325,20 +307,12 @@ app.post("/api/admin/migrate", async (req, res) => {
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_uploaded_at TIMESTAMPTZ;`);
 
     // relaxam NOT NULL pe doc paths daca exista
-    try {
-      await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_front_path DROP NOT NULL;`);
-    } catch (_) {}
-    try {
-      await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_back_path DROP NOT NULL;`);
-    } catch (_) {}
-    try {
-      await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN selfie_path DROP NOT NULL;`);
-    } catch (_) {}
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_front_path DROP NOT NULL;`); } catch (_) {}
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_back_path DROP NOT NULL;`); } catch (_) {}
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN selfie_path DROP NOT NULL;`); } catch (_) {}
 
     // payload -> jsonb
-    try {
-      await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`);
-    } catch (_) {}
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`); } catch (_) {}
 
     return res.json({ success: true, message: "migrate_ok" });
   } catch (e) {
@@ -418,6 +392,43 @@ app.post("/api/admin/set-role", async (req, res) => {
     return res.json({ success: true, user: upd.rows[0] });
   } catch (e) {
     console.error("ERROR /api/admin/set-role:", e);
+    return res.status(500).json({ success: false, error: "Eroare internă." });
+  }
+});
+
+// ===============================
+// ADMIN: Set status (protejat cu RESET_PASSWORD_SECRET)
+// Body: { secret, email, status } ex status: "active"
+// ===============================
+app.post("/api/admin/set-status", async (req, res) => {
+  try {
+    const secret = String(req.body?.secret || "");
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const status = String(req.body?.status || "").trim();
+
+    if (!process.env.RESET_PASSWORD_SECRET) {
+      return res.status(500).json({ success: false, error: "RESET_PASSWORD_SECRET not set" });
+    }
+    if (secret !== process.env.RESET_PASSWORD_SECRET) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    if (!email || !status) {
+      return res.status(400).json({ success: false, error: "Missing email/status" });
+    }
+
+    const upd = await pool.query(
+      `UPDATE users
+       SET status=$1
+       WHERE LOWER(email)=LOWER($2)
+       RETURNING id, email, role, status`,
+      [status, email]
+    );
+
+    if (!upd.rowCount) return res.status(404).json({ success: false, error: "User not found" });
+
+    return res.json({ success: true, user: upd.rows[0] });
+  } catch (e) {
+    console.error("ERROR /api/admin/set-status:", e);
     return res.status(500).json({ success: false, error: "Eroare internă." });
   }
 });
@@ -516,7 +527,9 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
   try {
     const raw = req.body || {};
     const payloadObj =
-      raw && typeof raw === "object" && raw.payload && typeof raw.payload === "object" ? raw.payload : raw;
+      raw && typeof raw === "object" && raw.payload && typeof raw.payload === "object"
+        ? raw.payload
+        : raw;
 
     const userId = Number(req.user.id);
 
@@ -663,9 +676,12 @@ app.post("/api/admin/kyc/approve", requireRole(["admin"]), async (req, res) => {
     const userId = Number(req.body?.user_id);
     if (!userId) return res.status(400).json({ success: false, error: "Missing user_id" });
 
-    await pool.query(`UPDATE kyc_submissions SET status='approved', updated_at=NOW() WHERE user_id=$1 AND status='pending'`, [
-      userId,
-    ]);
+    await pool.query(
+      `UPDATE kyc_submissions
+       SET status='approved', updated_at=NOW()
+       WHERE user_id=$1 AND status='pending'`,
+      [userId]
+    );
     await pool.query(`UPDATE users SET status='approved' WHERE id=$1`, [userId]);
 
     return res.json({ success: true, message: "KYC approved", status: "approved" });
@@ -681,9 +697,12 @@ app.post("/api/admin/kyc/reject", requireRole(["admin"]), async (req, res) => {
     const reason = String(req.body?.reason || "").trim();
     if (!userId) return res.status(400).json({ success: false, error: "Missing user_id" });
 
-    await pool.query(`UPDATE kyc_submissions SET status='rejected', updated_at=NOW() WHERE user_id=$1 AND status='pending'`, [
-      userId,
-    ]);
+    await pool.query(
+      `UPDATE kyc_submissions
+       SET status='rejected', updated_at=NOW()
+       WHERE user_id=$1 AND status='pending'`,
+      [userId]
+    );
     await pool.query(`UPDATE users SET status='rejected' WHERE id=$1`, [userId]);
 
     return res.json({ success: true, message: "KYC rejected", status: "rejected", reason: reason || null });
