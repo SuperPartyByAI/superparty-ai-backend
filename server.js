@@ -164,7 +164,6 @@ async function ensureSchema() {
     );
   `);
 
-  // columns for old schemas
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT;`);
@@ -188,17 +187,16 @@ async function ensureSchema() {
     );
   `);
 
-  // CRITICAL FIX: dacă tabela exista deja fără coloana payload, o adaugă acum
+  // IMPORTANT: dacă tabela exista deja fără payload -> o adaugă acum (asta îți repară DB-ul)
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS payload JSONB;`);
 
-  // dacă payload era TEXT în trecut, încearcă conversie (safe)
+  // dacă payload a fost TEXT în trecut, încearcă conversie (safe)
   try {
     await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`);
   } catch (e) {
     console.error("WARN ensureSchema: cannot alter kyc_submissions.payload to JSONB:", e?.message || e);
   }
 
-  // restul coloanelor (idempotent)
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_path TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_uploaded_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS driver_license_path TEXT;`);
@@ -238,6 +236,37 @@ app.get("/health-contract", async (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   } catch (e) {
     res.status(500).json({ status: "error", error: e.message });
+  }
+});
+
+// ===============================
+// ADMIN: force migrate (PROTEJAT CU SECRET)
+// Rulează fix-ul în DB chiar dacă ensureSchema n-a rulat cum trebuie.
+// Necesită Railway env: RESET_PASSWORD_SECRET
+// ===============================
+app.post("/api/admin/migrate", async (req, res) => {
+  try {
+    const secret = String(req.body?.secret || "");
+    if (!process.env.RESET_PASSWORD_SECRET) {
+      return res.status(500).json({ success: false, error: "RESET_PASSWORD_SECRET not set" });
+    }
+    if (secret !== process.env.RESET_PASSWORD_SECRET) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+
+    await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS payload JSONB;`);
+
+    const cols = await pool.query(
+      `SELECT column_name, data_type
+       FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='kyc_submissions'
+       ORDER BY ordinal_position ASC`
+    );
+
+    return res.json({ success: true, message: "migrate_ok", columns: cols.rows });
+  } catch (e) {
+    console.error("ERROR /api/admin/migrate:", e);
+    return res.status(500).json({ success: false, error: String(e?.message || e) });
   }
 });
 
@@ -313,7 +342,6 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// LOGIN — bcrypt + legacy (dacă cineva a pus parola direct în password_hash)
 app.post("/api/auth/login", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -372,9 +400,6 @@ app.post("/api/auth/login", async (req, res) => {
 // ===============================
 app.post("/api/kyc/submit", requireAuth, async (req, res) => {
   try {
-    // Acceptă ambele forme:
-    // 1) { payload: {...} }
-    // 2) { fullName, cnp, ... } (root)
     const raw = req.body || {};
     const payloadObj =
       raw && typeof raw === "object" && raw.payload && typeof raw.payload === "object"
@@ -382,8 +407,6 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
         : raw;
 
     const userId = Number(req.user.id);
-
-    // trimite ca JSON string + cast ::jsonb (stabil)
     const payloadJson = JSON.stringify(payloadObj || {});
 
     await pool.query(
