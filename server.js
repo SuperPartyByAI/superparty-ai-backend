@@ -21,6 +21,20 @@ app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_JWT_SECRET";
 
+/**
+ * ADMIN permanent din env (Railway Variables)
+ * Exemplu value: ursache.andrei1995@gmail.com, alt@exemplu.ro
+ */
+const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+function isEnvAdmin(email) {
+  const e = String(email || "").trim().toLowerCase();
+  return !!e && ADMIN_EMAILS.includes(e);
+}
+
 if (!process.env.DATABASE_URL) {
   console.error("ERROR: Lipseste DATABASE_URL in environment!");
 }
@@ -72,10 +86,23 @@ function requireAuth(req, res, next) {
   next();
 }
 
+/**
+ * requireRole:
+ * - permite rolurile clasice din token
+ * - PLUS: dacă email-ul e în ADMIN_EMAILS => consideră admin (fără DB update)
+ */
 function requireRole(roles) {
   return (req, res, next) => {
     const u = getAuthUser(req);
     if (!u) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+    // Admin permanent din env
+    if (isEnvAdmin(u.email)) {
+      u.role = "admin";
+      req.user = u;
+      return next();
+    }
+
     if (!roles.includes(u.role)) return res.status(403).json({ success: false, error: "Forbidden" });
     req.user = u;
     next();
@@ -618,7 +645,7 @@ app.post(
         fullName: full_name,
         cnp,
         address,
-        iban, // FIX: salvat si in payload
+        iban,
         isDriver,
         aiDataConfirmed,
         rawBodyKeys: Object.keys(body || {}),
@@ -632,7 +659,6 @@ app.post(
         },
       };
 
-      // FIX: include iban in INSERT si trimite "" daca lipseste (NU NULL)
       await pool.query(
         `INSERT INTO kyc_submissions(
            user_id, email, full_name, cnp, address, iban, phone,
@@ -656,7 +682,7 @@ app.post(
           full_name,
           cnp,
           address || null,
-          iban || "",       // IMPORTANT: NU NULL
+          iban || "",
           phone || null,
           idFront.path,
           idBack.path,
