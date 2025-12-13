@@ -567,6 +567,10 @@ app.post(
 
       const cnp = String(body.cnp || body.CNP || "").trim();
       const address = String(body.address || "").trim();
+
+      // FIX IBAN (NU MAI LASA NULL)
+      const iban = String(body.iban || body.IBAN || "").trim(); // poate fi "", dar NU va fi NULL
+
       const isDriver = String(body.isDriver || "0") === "1";
       const aiDataConfirmed = String(body.aiDataConfirmed || "0") === "1";
 
@@ -614,6 +618,7 @@ app.post(
         fullName: full_name,
         cnp,
         address,
+        iban, // FIX: salvat si in payload
         isDriver,
         aiDataConfirmed,
         rawBodyKeys: Object.keys(body || {}),
@@ -627,9 +632,10 @@ app.post(
         },
       };
 
+      // FIX: include iban in INSERT si trimite "" daca lipseste (NU NULL)
       await pool.query(
         `INSERT INTO kyc_submissions(
-           user_id, email, full_name, cnp, address, phone,
+           user_id, email, full_name, cnp, address, iban, phone,
            id_front_path, id_back_path, selfie_path,
            parent_consent_path, parent_consent_uploaded_at,
            driver_license_path, driver_license_uploaded_at,
@@ -637,12 +643,12 @@ app.post(
            status, payload, created_at, updated_at
          )
          VALUES (
-           $1,$2,$3,$4,$5,$6,
-           $7,$8,$9,
-           $10,$11,
-           $12,$13,
-           $14,$15,
-           'pending',$16,NOW(),NOW()
+           $1,$2,$3,$4,$5,$6,$7,
+           $8,$9,$10,
+           $11,$12,
+           $13,$14,
+           $15,$16,
+           'pending',$17,NOW(),NOW()
          )`,
         [
           userId,
@@ -650,6 +656,7 @@ app.post(
           full_name,
           cnp,
           address || null,
+          iban || "",       // IMPORTANT: NU NULL
           phone || null,
           idFront.path,
           idBack.path,
