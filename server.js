@@ -1,3 +1,4 @@
+// server.js
 require("dotenv").config();
 
 const express = require("express");
@@ -146,10 +147,10 @@ function isSixMonthsValid(uploadedAt) {
 }
 
 // ===============================
-// Schema (idempotent) — NU creează coloana "password"
+// Schema (idempotent)
 // ===============================
 async function ensureSchema() {
-  // users (fără "password" ca să nu rupi schema existentă)
+  // users
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -163,13 +164,14 @@ async function ensureSchema() {
     );
   `);
 
-  // asigură coloane dacă tabela e veche
+  // columns for old schemas
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT;`);
   await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'angajat';`);
   await pool.query(`ALTER TABLE users ALTER COLUMN status SET DEFAULT 'kyc_required';`);
 
+  // kyc_submissions
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
       id SERIAL PRIMARY KEY,
@@ -186,13 +188,25 @@ async function ensureSchema() {
     );
   `);
 
-  // dacă ai avut payload TEXT în trecut, încearcă să-l convertești la JSONB (safe: dacă nu merge, doar log)
+  // CRITICAL FIX: dacă tabela exista deja fără coloana payload, o adaugă acum
+  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS payload JSONB;`);
+
+  // dacă payload era TEXT în trecut, încearcă conversie (safe)
   try {
     await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`);
   } catch (e) {
     console.error("WARN ensureSchema: cannot alter kyc_submissions.payload to JSONB:", e?.message || e);
   }
 
+  // restul coloanelor (idempotent)
+  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_path TEXT;`);
+  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_uploaded_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS driver_license_path TEXT;`);
+  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS driver_license_uploaded_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_path TEXT;`);
+  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_uploaded_at TIMESTAMPTZ;`);
+
+  // contract_acceptances
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_acceptances (
       id SERIAL PRIMARY KEY,
@@ -211,19 +225,13 @@ async function ensureSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS ux_contract_acceptances_user_cycle
     ON contract_acceptances(user_id, cycle_start, cycle_end);
   `);
-
-  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_path TEXT;`);
-  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS parent_consent_uploaded_at TIMESTAMPTZ;`);
-  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS driver_license_path TEXT;`);
-  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS driver_license_uploaded_at TIMESTAMPTZ;`);
-  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_path TEXT;`);
-  await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_uploaded_at TIMESTAMPTZ;`);
 }
 
 // ===============================
 // Health
 // ===============================
 app.get("/health", (req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
+
 app.get("/health-contract", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -375,7 +383,7 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
 
     const userId = Number(req.user.id);
 
-    // IMPORTANT: payload este JSONB => trimite ca string + cast ::jsonb
+    // trimite ca JSON string + cast ::jsonb (stabil)
     const payloadJson = JSON.stringify(payloadObj || {});
 
     await pool.query(
