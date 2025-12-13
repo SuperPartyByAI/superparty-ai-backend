@@ -22,7 +22,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-// Build info (ca să confirmi că Railway rulează ultima versiune)
+// Build info (ca sa confirmi ca Railway ruleaza codul nou)
 const BUILD_SHA =
   process.env.RAILWAY_GIT_COMMIT_SHA ||
   process.env.VERCEL_GIT_COMMIT_SHA ||
@@ -173,8 +173,7 @@ async function ensureSchema() {
   await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'angajat';`);
   await pool.query(`ALTER TABLE users ALTER COLUMN status SET DEFAULT 'kyc_required';`);
 
-  // IMPORTANT: DB-ul tău existent are deja o kyc_submissions "legacy".
-  // Noi doar asigurăm coloanele necesare fără să stricăm ce există.
+  // kyc_submissions: pastram schema legacy + adaugam payload
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
       id SERIAL PRIMARY KEY,
@@ -207,6 +206,7 @@ async function ensureSchema() {
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS address TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS iban TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS phone TEXT;`);
+
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_front_path TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_back_path TEXT;`);
   await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS selfie_path TEXT;`);
@@ -226,6 +226,12 @@ async function ensureSchema() {
   } catch (e) {
     console.error("WARN ensureSchema: cannot alter kyc_submissions.payload to JSONB:", e?.message || e);
   }
+
+  // FIX CRITIC: daca legacy DB are NOT NULL pe id_front_path/id_back_path/selfie_path, il relaxam
+  // (altfel KYC fara upload pica)
+  try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_front_path DROP NOT NULL;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_back_path DROP NOT NULL;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN selfie_path DROP NOT NULL;`); } catch (_) {}
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_acceptances (
@@ -259,7 +265,6 @@ app.get("/health", (req, res) =>
   })
 );
 
-// vezi exact ce e în token (debug)
 app.get("/api/auth/me", requireAuth, (req, res) => {
   res.json({ success: true, tokenUser: req.user });
 });
@@ -285,6 +290,7 @@ app.post("/api/admin/migrate", async (req, res) => {
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS address TEXT;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS iban TEXT;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS phone TEXT;`);
+
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_front_path TEXT;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS id_back_path TEXT;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS selfie_path TEXT;`);
@@ -297,9 +303,12 @@ app.post("/api/admin/migrate", async (req, res) => {
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_path TEXT;`);
     await pool.query(`ALTER TABLE kyc_submissions ADD COLUMN IF NOT EXISTS criminal_record_uploaded_at TIMESTAMPTZ;`);
 
-    try {
-      await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`);
-    } catch (_) {}
+    // DROP NOT NULL pe coloanele care te blocheaza acum
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_front_path DROP NOT NULL;`); } catch (_) {}
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN id_back_path DROP NOT NULL;`); } catch (_) {}
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN selfie_path DROP NOT NULL;`); } catch (_) {}
+
+    try { await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`); } catch (_) {}
 
     return res.json({ success: true, message: "migrate_ok" });
   } catch (e) {
@@ -309,7 +318,7 @@ app.post("/api/admin/migrate", async (req, res) => {
 });
 
 // ===============================
-// TEMP: Reset password (PROTEJAT CU SECRET)
+// TEMP: Reset password (protejat)
 // ===============================
 app.post("/api/admin/reset-password", async (req, res) => {
   try {
@@ -433,10 +442,7 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // ===============================
-// KYC
-// FIX CRITIC: email NU mai poate ajunge NULL.
-// - îl ia din token, iar dacă lipsește, îl ia din DB (users)
-// - îl inserează explicit în kyc_submissions (email NOT NULL în DB-ul tău)
+// KYC submit
 // ===============================
 app.post("/api/kyc/submit", requireAuth, async (req, res) => {
   try {
@@ -446,20 +452,14 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
 
     const userId = Number(req.user.id);
 
-    // 1) email din token
+    // email din token, fallback din DB
     let email = String(req.user.email || "").trim().toLowerCase();
-
-    // 2) fallback: email din DB (dacă tokenul nu are email)
     if (!email) {
       const qe = await pool.query(`SELECT email FROM users WHERE id=$1 LIMIT 1`, [userId]);
       email = qe.rowCount ? String(qe.rows[0].email || "").trim().toLowerCase() : "";
     }
+    if (!email) return res.status(400).json({ success: false, error: "Cannot resolve email for user" });
 
-    if (!email) {
-      return res.status(400).json({ success: false, error: "Cannot resolve email for user" });
-    }
-
-    // fallback name/phone din DB
     const u = await pool.query(`SELECT full_name, phone FROM users WHERE id=$1 LIMIT 1`, [userId]);
     const fullNameDb = u.rowCount ? String(u.rows[0].full_name || "").trim() : "";
     const phoneDb = u.rowCount ? String(u.rows[0].phone || "").trim() : "";
@@ -496,177 +496,6 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
       detail: e?.detail || null,
       constraint: e?.constraint || null,
     });
-  }
-});
-
-app.get("/api/kyc/doc-status", async (req, res) => {
-  try {
-    const email = String(req.query.email || "").trim().toLowerCase();
-    if (!email) return res.status(400).json({ success: false, error: "Missing email" });
-
-    const u = await pool.query(`SELECT id FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email]);
-    if (!u.rowCount) return res.status(404).json({ success: false, error: "User not found" });
-
-    const userId = u.rows[0].id;
-
-    const q = await pool.query(
-      `SELECT parent_consent_path, parent_consent_uploaded_at,
-              driver_license_path, driver_license_uploaded_at,
-              criminal_record_path, criminal_record_uploaded_at
-       FROM kyc_submissions
-       WHERE user_id=$1
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [userId]
-    );
-
-    const row = q.rowCount ? q.rows[0] : null;
-    const recordValid = row && row.criminal_record_uploaded_at ? isSixMonthsValid(row.criminal_record_uploaded_at) : false;
-
-    return res.json({
-      success: true,
-      parentConsent:
-        row && row.parent_consent_path ? { path: row.parent_consent_path, uploadedAt: row.parent_consent_uploaded_at } : null,
-      driver: {
-        license:
-          row && row.driver_license_path ? { path: row.driver_license_path, uploadedAt: row.driver_license_uploaded_at } : null,
-        record:
-          row && row.criminal_record_path
-            ? { path: row.criminal_record_path, uploadedAt: row.criminal_record_uploaded_at, valid: recordValid }
-            : null,
-      },
-    });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ success: false, error: "Eroare internă." });
-  }
-});
-
-// ===============================
-// ADMIN KYC
-// ===============================
-app.get("/api/admin/kyc/list", requireRole(["admin"]), async (req, res) => {
-  try {
-    const q = await pool.query(
-      `SELECT k.id AS kyc_id, k.user_id, k.status AS kyc_status, k.created_at,
-              u.full_name, u.email, u.phone, u.role, u.status AS user_status,
-              k.payload
-       FROM kyc_submissions k
-       JOIN users u ON u.id = k.user_id
-       WHERE k.status='pending'
-       ORDER BY k.created_at ASC`
-    );
-
-    return res.json({ success: true, pending: q.rows });
-  } catch (e) {
-    console.error("ERROR /api/admin/kyc/list:", e);
-    return res.status(500).json({ success: false, error: "Eroare internă." });
-  }
-});
-
-app.post("/api/admin/kyc/approve", requireRole(["admin"]), async (req, res) => {
-  try {
-    const userId = Number(req.body?.user_id);
-    if (!userId) return res.status(400).json({ success: false, error: "Missing user_id" });
-
-    await pool.query(`UPDATE kyc_submissions SET status='approved', updated_at=NOW() WHERE user_id=$1 AND status='pending'`, [userId]);
-    await pool.query(`UPDATE users SET status='approved' WHERE id=$1`, [userId]);
-
-    return res.json({ success: true, message: "KYC approved", status: "approved" });
-  } catch (e) {
-    console.error("ERROR /api/admin/kyc/approve:", e);
-    return res.status(500).json({ success: false, error: "Eroare internă." });
-  }
-});
-
-app.post("/api/admin/kyc/reject", requireRole(["admin"]), async (req, res) => {
-  try {
-    const userId = Number(req.body?.user_id);
-    const reason = String(req.body?.reason || "").trim();
-    if (!userId) return res.status(400).json({ success: false, error: "Missing user_id" });
-
-    await pool.query(`UPDATE kyc_submissions SET status='rejected', updated_at=NOW() WHERE user_id=$1 AND status='pending'`, [userId]);
-    await pool.query(`UPDATE users SET status='rejected' WHERE id=$1`, [userId]);
-
-    return res.json({ success: true, message: "KYC rejected", status: "rejected", reason: reason || null });
-  } catch (e) {
-    console.error("ERROR /api/admin/kyc/reject:", e);
-    return res.status(500).json({ success: false, error: "Eroare internă." });
-  }
-});
-
-// ===============================
-// CONTRACT
-// ===============================
-app.get("/api/contract/status", async (req, res) => {
-  try {
-    const email = String(req.query.email || "").trim().toLowerCase();
-    if (!email) return res.status(400).json({ success: false, error: "Missing email" });
-
-    const u = await pool.query(`SELECT id FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email]);
-    if (!u.rowCount) return res.status(404).json({ success: false, error: "User not found" });
-
-    const userId = u.rows[0].id;
-    const { cycleStart, cycleEnd } = getContractCycle(new Date());
-
-    const a = await pool.query(
-      `SELECT id FROM contract_acceptances
-       WHERE user_id=$1 AND cycle_start=$2 AND cycle_end=$3
-       LIMIT 1`,
-      [userId, cycleStart.toISOString(), cycleEnd.toISOString()]
-    );
-
-    return res.json({
-      success: true,
-      cycleStart: cycleStart.toISOString(),
-      cycleEnd: cycleEnd.toISOString(),
-      acceptedForCycle: !!a.rowCount,
-    });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ success: false, error: "Eroare internă." });
-  }
-});
-
-app.post("/api/contract/accept", async (req, res) => {
-  try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const contractVersion = String(req.body?.contractVersion || "").trim();
-    const contractTextHash = String(req.body?.contractTextHash || "").trim();
-
-    if (!email || !contractVersion || !contractTextHash) {
-      return res.status(400).json({ success: false, error: "Missing fields" });
-    }
-
-    const u = await pool.query(`SELECT id FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email]);
-    if (!u.rowCount) return res.status(404).json({ success: false, error: "User not found" });
-
-    const userId = u.rows[0].id;
-    const { cycleStart, cycleEnd } = getContractCycle(new Date());
-
-    const ip =
-      (req.headers["x-forwarded-for"] ? String(req.headers["x-forwarded-for"]).split(",")[0].trim() : "") ||
-      (req.socket && req.socket.remoteAddress) ||
-      null;
-
-    const ua = req.headers["user-agent"] ? String(req.headers["user-agent"]) : null;
-
-    await pool.query(
-      `INSERT INTO contract_acceptances(user_id, cycle_start, cycle_end, contract_version, contract_text_hash, accepted_ip, accepted_user_agent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (user_id, cycle_start, cycle_end) DO UPDATE
-       SET contract_version=EXCLUDED.contract_version,
-           contract_text_hash=EXCLUDED.contract_text_hash,
-           accepted_at=NOW(),
-           accepted_ip=EXCLUDED.accepted_ip,
-           accepted_user_agent=EXCLUDED.accepted_user_agent`,
-      [userId, cycleStart.toISOString(), cycleEnd.toISOString(), contractVersion, contractTextHash, ip, ua]
-    );
-
-    return res.json({ success: true, cycleStart: cycleStart.toISOString(), cycleEnd: cycleEnd.toISOString() });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ success: false, error: "Eroare internă." });
   }
 });
 
