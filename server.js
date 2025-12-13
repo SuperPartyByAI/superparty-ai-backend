@@ -163,7 +163,7 @@ async function ensureSchema() {
     );
   `);
 
-  // asigură password_hash dacă tabela e veche
+  // asigură coloane dacă tabela e veche
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT;`);
@@ -185,6 +185,13 @@ async function ensureSchema() {
       criminal_record_uploaded_at TIMESTAMPTZ
     );
   `);
+
+  // dacă ai avut payload TEXT în trecut, încearcă să-l convertești la JSONB (safe: dacă nu merge, doar log)
+  try {
+    await pool.query(`ALTER TABLE kyc_submissions ALTER COLUMN payload TYPE JSONB USING payload::jsonb;`);
+  } catch (e) {
+    console.error("WARN ensureSchema: cannot alter kyc_submissions.payload to JSONB:", e?.message || e);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_acceptances (
@@ -248,7 +255,6 @@ app.post("/api/admin/reset-password", async (req, res) => {
 
     const hash = await bcrypt.hash(newPassword, 10);
 
-    // IMPORTANT: doar password_hash (fără password=NULL)
     const upd = await pool.query(
       `UPDATE users
        SET password_hash=$1
@@ -363,16 +369,13 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
     // 2) { fullName, cnp, ... } (root)
     const raw = req.body || {};
     const payloadObj =
-      raw &&
-      typeof raw === "object" &&
-      raw.payload &&
-      typeof raw.payload === "object"
+      raw && typeof raw === "object" && raw.payload && typeof raw.payload === "object"
         ? raw.payload
         : raw;
 
     const userId = Number(req.user.id);
 
-    // IMPORTANT: payload este JSONB în Postgres => trimite ca string + cast ::jsonb
+    // IMPORTANT: payload este JSONB => trimite ca string + cast ::jsonb
     const payloadJson = JSON.stringify(payloadObj || {});
 
     await pool.query(
@@ -390,7 +393,13 @@ app.post("/api/kyc/submit", requireAuth, async (req, res) => {
     });
   } catch (e) {
     console.error("ERROR /api/kyc/submit:", e);
-    return res.status(500).json({ success: false, error: String(e?.message || e) });
+    return res.status(500).json({
+      success: false,
+      error: String(e?.message || e),
+      code: e?.code || null,
+      detail: e?.detail || null,
+      constraint: e?.constraint || null,
+    });
   }
 });
 
@@ -420,16 +429,19 @@ app.get("/api/kyc/doc-status", async (req, res) => {
 
     res.json({
       success: true,
-      parentConsent: row && row.parent_consent_path
-        ? { path: row.parent_consent_path, uploadedAt: row.parent_consent_uploaded_at }
-        : null,
+      parentConsent:
+        row && row.parent_consent_path
+          ? { path: row.parent_consent_path, uploadedAt: row.parent_consent_uploaded_at }
+          : null,
       driver: {
-        license: row && row.driver_license_path
-          ? { path: row.driver_license_path, uploadedAt: row.driver_license_uploaded_at }
-          : null,
-        record: row && row.criminal_record_path
-          ? { path: row.criminal_record_path, uploadedAt: row.criminal_record_uploaded_at, valid: recordValid }
-          : null,
+        license:
+          row && row.driver_license_path
+            ? { path: row.driver_license_path, uploadedAt: row.driver_license_uploaded_at }
+            : null,
+        record:
+          row && row.criminal_record_path
+            ? { path: row.criminal_record_path, uploadedAt: row.criminal_record_uploaded_at, valid: recordValid }
+            : null,
       },
     });
   } catch (e) {
