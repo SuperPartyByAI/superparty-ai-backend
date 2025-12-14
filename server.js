@@ -692,6 +692,16 @@ app.post(
       if (!uq.rowCount) return res.status(404).json({ success: false, error: "User not found" });
 
       const dbUser = uq.rows[0];
+      // KYC_GUARD_NO_RESUBMIT_APPROVED: nu permitem retrimitere dacă e deja approved
+      const curStatus = String(dbUser.status || "").trim().toLowerCase();
+      if (curStatus === "approved") {
+        return res.status(409).json({
+          success: false,
+          error: "KYC este deja aprobat. Nu poți retrimite.",
+          status: "approved",
+        });
+      }
+
       const full_name = fullNameFromBody || String(dbUser.full_name || "").trim();
       const phone = String(dbUser.phone || "").trim();
 
