@@ -341,8 +341,33 @@ app.get("/health", (req, res) =>
   })
 );
 
-app.get("/api/auth/me", requireAuth, (req, res) => {
-  res.json({ success: true, tokenUser: req.user });
+app.get("/api/auth/me", requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+    const q = await pool.query(
+      `SELECT id, full_name, email, phone, role, status
+       FROM users
+       WHERE id=$1
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (!q.rowCount) return res.status(404).json({ success: false, error: "User not found" });
+
+    const dbUser = q.rows[0];
+
+    // admin permanent din env
+    if (isEnvAdmin(dbUser.email)) dbUser.role = "admin";
+
+    const freshToken = signJwt(dbUser);
+
+    return res.json({ success: true, tokenUser: dbUser, token: freshToken });
+  } catch (e) {
+    console.error("ERROR /api/auth/me:", e);
+    return res.status(500).json({ success: false, error: "Eroare internă." });
+  }
 });
 
 // ===============================
