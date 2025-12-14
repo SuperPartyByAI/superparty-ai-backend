@@ -683,7 +683,7 @@ app.post(
       const fullNameFromBody = String(body.fullName || body.full_name || "").trim();
 
       const uq = await pool.query(
-        `SELECT id, full_name, email, phone
+        `SELECT id, full_name, email, phone, status
          FROM users
          WHERE id=$1
          LIMIT 1`,
