@@ -610,6 +610,46 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // ===============================
+// KYC status (protected)
+// ===============================
+app.get("/api/kyc/status", requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+    const uq = await pool.query(
+      `SELECT id, status
+       FROM users
+       WHERE id=$1
+       LIMIT 1`,
+      [userId]
+    );
+    if (!uq.rowCount) return res.status(404).json({ success: false, error: "User not found" });
+
+    const kq = await pool.query(
+      `SELECT id, status, created_at, updated_at
+       FROM kyc_submissions
+       WHERE user_id=$1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+
+    const kyc = kq.rowCount ? kq.rows[0] : null;
+
+    return res.json({
+      success: true,
+      userStatus: uq.rows[0].status,
+      kycStatus: kyc ? kyc.status : null,
+      kyc,
+    });
+  } catch (e) {
+    console.error("ERROR /api/kyc/status:", e);
+    return res.status(500).json({ success: false, error: "Eroare internă." });
+  }
+});
+
+// ===============================
 // KYC submit (multipart)
 // ===============================
 app.post(
