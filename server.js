@@ -242,7 +242,8 @@ async function ensureSchema() {
       role TEXT NOT NULL DEFAULT 'angajat',
       status TEXT NOT NULL DEFAULT 'kyc_required',
       password_hash TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 
@@ -257,6 +258,12 @@ async function ensureSchema() {
   try { await pool.query(`ALTER TABLE users ALTER COLUMN created_at SET DEFAULT NOW();`); } catch (_) {}
   try { await pool.query(`UPDATE users SET created_at = NOW() WHERE created_at IS NULL;`); } catch (_) {}
   try { await pool.query(`ALTER TABLE users ALTER COLUMN created_at SET NOT NULL;`); } catch (_) {}
+
+  // FIX: DB vechi poate avea users.updated_at NOT NULL dar FARA DEFAULT => INSERT pica cu NULL
+  try { await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE users ALTER COLUMN updated_at SET DEFAULT NOW();`); } catch (_) {}
+  try { await pool.query(`UPDATE users SET updated_at = NOW() WHERE updated_at IS NULL;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE users ALTER COLUMN updated_at SET NOT NULL;`); } catch (_) {}
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
@@ -538,10 +545,10 @@ app.post("/api/auth/register", async (req, res) => {
 
     const password_hash = await bcrypt.hash(password, 10);
 
-    // FIX: includem created_at explicit ca sa nu pice pe DB-uri vechi fara DEFAULT pe created_at
+    // FIX: includem created_at/updated_at explicit ca sa nu pice pe DB-uri vechi fara DEFAULT
     const ins = await pool.query(
-      `INSERT INTO users(full_name,email,phone,role,status,password_hash,created_at)
-       VALUES ($1,$2,$3,'angajat','kyc_required',$4,NOW())
+      `INSERT INTO users(full_name,email,phone,role,status,password_hash,created_at,updated_at)
+       VALUES ($1,$2,$3,'angajat','kyc_required',$4,NOW(),NOW())
        RETURNING id, full_name, email, phone, role, status`,
       [full_name, email, phone, password_hash]
     );
