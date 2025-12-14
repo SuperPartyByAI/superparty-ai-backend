@@ -252,6 +252,12 @@ async function ensureSchema() {
   try { await pool.query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'angajat';`); } catch (_) {}
   try { await pool.query(`ALTER TABLE users ALTER COLUMN status SET DEFAULT 'kyc_required';`); } catch (_) {}
 
+  // FIX: DB vechi poate avea users.created_at NOT NULL dar FARA DEFAULT => INSERT pica cu NULL
+  try { await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE users ALTER COLUMN created_at SET DEFAULT NOW();`); } catch (_) {}
+  try { await pool.query(`UPDATE users SET created_at = NOW() WHERE created_at IS NULL;`); } catch (_) {}
+  try { await pool.query(`ALTER TABLE users ALTER COLUMN created_at SET NOT NULL;`); } catch (_) {}
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kyc_submissions (
       id SERIAL PRIMARY KEY,
@@ -532,9 +538,10 @@ app.post("/api/auth/register", async (req, res) => {
 
     const password_hash = await bcrypt.hash(password, 10);
 
+    // FIX: includem created_at explicit ca sa nu pice pe DB-uri vechi fara DEFAULT pe created_at
     const ins = await pool.query(
-      `INSERT INTO users(full_name,email,phone,role,status,password_hash)
-       VALUES ($1,$2,$3,'angajat','kyc_required',$4)
+      `INSERT INTO users(full_name,email,phone,role,status,password_hash,created_at)
+       VALUES ($1,$2,$3,'angajat','kyc_required',$4,NOW())
        RETURNING id, full_name, email, phone, role, status`,
       [full_name, email, phone, password_hash]
     );
