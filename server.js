@@ -6,6 +6,9 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
+// AI (OpenAI SDK)
+const OpenAI = require("openai");
+
 // multipart uploads
 const multer = require("multer");
 const fs = require("fs");
@@ -51,6 +54,13 @@ const BUILD_SHA =
   process.env.RENDER_GIT_COMMIT ||
   "unknown";
 const BOOT_TS = new Date().toISOString();
+
+// ===============================
+// OpenAI client (safe, lazy)
+// ===============================
+const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "");
+const OPENAI_MODEL = String(process.env.OPENAI_MODEL || "gpt-4o-mini");
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 // ===============================
 // JWT helpers
@@ -353,6 +363,86 @@ app.get("/health", (req, res) =>
     build: BUILD_SHA,
   })
 );
+
+// ===============================
+// AI endpoint (public): POST /api/ai
+// ===============================
+app.post("/api/ai", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const action = String(body.action || "").trim().toLowerCase();
+
+    // Diagnostic always works (even without key)
+    if (action === "diagnostic") {
+      return res.json({
+        success: true,
+        ai: "sp-ai-railway",
+        ok: true,
+        hasOpenAIKey: !!OPENAI_API_KEY,
+        model: OPENAI_MODEL,
+        build: BUILD_SHA,
+        bootTs: BOOT_TS,
+        time: Date.now(),
+        actorRole: body?.actor?.role || null,
+        note: OPENAI_API_KEY ? "OpenAI key present. POST /api/ai ready." : "OPENAI_API_KEY missing in Railway Variables.",
+      });
+    }
+
+    if (!openai) {
+      return res.status(500).json({
+        success: false,
+        ok: false,
+        error: "OPENAI_API_KEY missing",
+        note: "Set OPENAI_API_KEY in Railway Variables (do not paste it in chat).",
+      });
+    }
+
+    // Accept either messages[] or prompt/input
+    let messages = Array.isArray(body.messages) ? body.messages : null;
+    const prompt = String(body.prompt || body.input || "").trim();
+
+    if (!messages) {
+      if (!prompt) {
+        return res.status(400).json({
+          success: false,
+          ok: false,
+          error: "Missing messages or prompt",
+        });
+      }
+      messages = [{ role: "user", content: prompt }];
+    }
+
+    // Basic Chat Completions
+    const resp = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages,
+      temperature: typeof body.temperature === "number" ? body.temperature : 0.2,
+    });
+
+    const text =
+      resp && resp.choices && resp.choices[0] && resp.choices[0].message
+        ? String(resp.choices[0].message.content || "")
+        : "";
+
+    return res.json({
+      success: true,
+      ai: "sp-ai-railway",
+      ok: true,
+      model: OPENAI_MODEL,
+      text,
+      usage: resp.usage || null,
+      time: Date.now(),
+    });
+  } catch (e) {
+    console.error("ERROR /api/ai:", e);
+    return res.status(500).json({
+      success: false,
+      ok: false,
+      error: "AI error",
+      detail: String(e?.message || e),
+    });
+  }
+});
 
 app.get("/api/auth/me", requireAuth, async (req, res) => {
   try {
