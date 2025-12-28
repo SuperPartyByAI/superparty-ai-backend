@@ -5,7 +5,7 @@ const path = require('path');
 class ElevenLabsHandler {
   constructor() {
     this.apiKey = process.env.ELEVENLABS_API_KEY || 'sk_2e63b1cacac373135a1dfc97d6165ef184d0d66a181f74fc';
-    this.voiceId = 'EXAVITQu4vr4xnSDxMaL'; // Sarah - natural female voice
+    this.voiceId = 'QtObtrglHRaER8xlDZsr';
     this.cacheDir = path.join(__dirname, 'cache');
     
     // Create cache directory
