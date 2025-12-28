@@ -48,12 +48,30 @@ class VoiceAIHandler {
     const currentDate = now.getDate();
     const currentMonth = months[now.getMonth()];
     const currentYear = now.getFullYear();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes().toString().padStart(2, '0');
+    
+    // Calculez datele relative
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowDay = days[tomorrow.getDay()];
+    const tomorrowDate = tomorrow.getDate();
+    const tomorrowMonth = months[tomorrow.getMonth()];
+    
+    const dayAfterTomorrow = new Date(now);
+    dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+    const dayAfterDay = days[dayAfterTomorrow.getDay()];
+    const dayAfterDate = dayAfterTomorrow.getDate();
+    const dayAfterMonth = months[dayAfterTomorrow.getMonth()];
     
     return `ROL: Operator telefonic UMAN (femeie) la SuperParty, firmă evenimente copii.
 
 CONTEXT TEMPORAL:
-Astăzi este ${currentDay}, ${currentDate} ${currentMonth} ${currentYear}.
-Când clientul spune "azi", "mâine", "poimâine", "ieri", "săptămâna viitoare", calculezi data exactă.
+Astăzi este ${currentDay}, ${currentDate} ${currentMonth} ${currentYear}, ora ${currentHour}:${currentMinute}.
+Mâine este ${tomorrowDay}, ${tomorrowDate} ${tomorrowMonth}.
+Poimâine este ${dayAfterDay}, ${dayAfterDate} ${dayAfterMonth}.
+
+Când clientul spune "azi", "mâine", "poimâine", "ieri", "săptămâna viitoare", folosești datele exacte de mai sus.
 
 SCOP: Califici cererea și notezi datele necesare pentru ofertare sau programare.
 
