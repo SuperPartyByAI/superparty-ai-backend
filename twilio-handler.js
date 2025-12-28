@@ -53,26 +53,26 @@ class TwilioHandler {
           audioUrl = await this.voiceAI.coqui.generateSpeech(greeting);
         }
         
-        if (audioUrl) {
-          // Use Kasya voice from Coqui
-          const fullUrl = `${process.env.COQUI_API_URL || 'https://web-production-00dca9.up.railway.app'}${audioUrl}`;
-          twiml.play(fullUrl);
-        } else {
-          // Fallback to Polly
-          twiml.say({
-            voice: 'Polly.Carmen',
-            language: 'ro-RO'
-          }, greeting);
-        }
-        
-        // Gather speech input
+        // Use Polly voice (mai naturală decât Coqui pentru acum)
         const gather = twiml.gather({
           input: 'speech',
           language: 'ro-RO',
-          speechTimeout: 'auto',
+          speechTimeout: 3,
+          timeout: 5,
           action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
           method: 'POST'
         });
+        
+        gather.say({
+          voice: 'Polly.Carmen',
+          language: 'ro-RO'
+        }, greeting);
+        
+        // Dacă nu vorbește, repetă
+        twiml.say({
+          voice: 'Polly.Carmen',
+          language: 'ro-RO'
+        }, 'Vă ascult.');
         
       } else if (SpeechResult) {
         // Process user input
@@ -80,15 +80,10 @@ class TwilioHandler {
         
         if (result.completed) {
           // Conversation complete
-          if (result.audioUrl) {
-            const fullUrl = `${process.env.COQUI_API_URL || 'https://web-production-00dca9.up.railway.app'}${result.audioUrl}`;
-            twiml.play(fullUrl);
-          } else {
-            twiml.say({
-              voice: 'Polly.Carmen',
-              language: 'ro-RO'
-            }, result.response);
-          }
+          twiml.say({
+            voice: 'Polly.Carmen',
+            language: 'ro-RO'
+          }, result.response);
           
           twiml.hangup();
           
@@ -98,39 +93,46 @@ class TwilioHandler {
           
         } else {
           // Continue conversation
-          if (result.audioUrl) {
-            const fullUrl = `${process.env.COQUI_API_URL || 'https://web-production-00dca9.up.railway.app'}${result.audioUrl}`;
-            twiml.play(fullUrl);
-          } else {
-            twiml.say({
-              voice: 'Polly.Carmen',
-              language: 'ro-RO'
-            }, result.response);
-          }
-          
-          // Gather next input
           const gather = twiml.gather({
             input: 'speech',
             language: 'ro-RO',
-            speechTimeout: 'auto',
+            speechTimeout: 3,
+            timeout: 5,
             action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
             method: 'POST'
           });
+          
+          gather.say({
+            voice: 'Polly.Carmen',
+            language: 'ro-RO'
+          }, result.response);
+          
+          // Dacă nu vorbește, repetă
+          twiml.say({
+            voice: 'Polly.Carmen',
+            language: 'ro-RO'
+          }, 'Vă ascult.');
         }
       } else {
         // No input - repeat
-        twiml.say({
-          voice: 'Polly.Carmen',
-          language: 'ro-RO'
-        }, 'Nu am primit nicio informație. Vă rog să repetați.');
-        
         const gather = twiml.gather({
           input: 'speech',
           language: 'ro-RO',
-          speechTimeout: 'auto',
+          speechTimeout: 3,
+          timeout: 5,
           action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
           method: 'POST'
         });
+        
+        gather.say({
+          voice: 'Polly.Carmen',
+          language: 'ro-RO'
+        }, 'Vă rog să repetați.');
+        
+        twiml.say({
+          voice: 'Polly.Carmen',
+          language: 'ro-RO'
+        }, 'Vă ascult.');
       }
 
       res.type('text/xml');
