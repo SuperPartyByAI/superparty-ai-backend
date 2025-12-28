@@ -4,7 +4,7 @@ const path = require('path');
 
 class ElevenLabsHandler {
   constructor() {
-    this.apiKey = process.env.ELEVENLABS_API_KEY || '890f6408719de15b71818e7c4f1e8b82ec7a1d4ad8e1f247e6d298b9a91f20c8';
+    this.apiKey = process.env.ELEVENLABS_API_KEY || 'sk_2e63b1cacac373135a1dfc97d6165ef184d0d66a181f74fc';
     this.voiceId = 'EXAVITQu4vr4xnSDxMaL'; // Sarah - natural female voice
     this.cacheDir = path.join(__dirname, 'cache');
     
