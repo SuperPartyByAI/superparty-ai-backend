@@ -8,6 +8,13 @@ class TwilioHandler {
   }
 
   /**
+   * Wrap text in SSML for more natural Polly voice
+   */
+  makeNaturalVoice(text) {
+    return `<speak><prosody rate="95%" pitch="+2st" volume="medium">${text}</prosody></speak>`;
+  }
+
+  /**
    * Handle incoming call
    */
   handleIncomingCall(req, res) {
@@ -47,13 +54,30 @@ class TwilioHandler {
       const twiml = new VoiceResponse();
       
       if (initial === 'true') {
-        // First message - greeting
+        // Initialize conversation with greeting
         const greetingText = 'Bună ziua! Numele meu este Kasya, de la SuperParty. Cu ce vă pot ajuta?';
+        
+        // Initialize conversation in VoiceAI
+        this.voiceAI.conversations.set(CallSid, {
+          messages: [
+            { role: 'system', content: this.voiceAI.getSystemPrompt() },
+            { role: 'assistant', content: greetingText }
+          ],
+          data: {}
+        });
         
         // Try to get audio from Google TTS
         let audioUrl = null;
         if (this.voiceAI.googleTTS?.isConfigured()) {
+          console.log('[Voice] Attempting Google Cloud TTS...');
           audioUrl = await this.voiceAI.googleTTS.generateSpeech(greetingText);
+          if (audioUrl) {
+            console.log('[Voice] ✅ Using Google Cloud TTS (natural voice)');
+          } else {
+            console.log('[Voice] ❌ Google Cloud TTS failed');
+          }
+        } else {
+          console.log('[Voice] ⚠️ Google Cloud TTS not configured');
         }
         
         const gather = twiml.gather({
@@ -67,16 +91,16 @@ class TwilioHandler {
         
         if (audioUrl) {
           // Use Google TTS audio (natural voice)
-          console.log('[Voice] Using Google Cloud TTS (natural voice)');
           const fullUrl = `${process.env.BACKEND_URL}${audioUrl}`;
           gather.play(fullUrl);
         } else {
-          // Fallback to Google Wavenet (more natural than Polly)
-          console.log('[Voice] Using Google Wavenet fallback');
+          // Fallback to Amazon Polly with SSML for more natural voice
+          console.log('[Voice] Using Amazon Polly with SSML');
+          const ssmlGreeting = `<speak><prosody rate="95%" pitch="+2st" volume="medium">${greetingText}</prosody></speak>`;
           gather.say({
-            voice: 'Google.ro-RO-Wavenet-A',
+            voice: 'Polly.Carmen',
             language: 'ro-RO'
-          }, greetingText);
+          }, ssmlGreeting);
         }
         
       } else if (SpeechResult) {
@@ -90,9 +114,9 @@ class TwilioHandler {
             twiml.play(fullUrl);
           } else {
             twiml.say({
-              voice: 'Google.ro-RO-Wavenet-A',
+              voice: 'Polly.Carmen',
               language: 'ro-RO'
-            }, result.response);
+            }, this.makeNaturalVoice(result.response));
           }
           
           twiml.hangup();
@@ -117,9 +141,9 @@ class TwilioHandler {
             gather.play(fullUrl);
           } else {
             gather.say({
-              voice: 'Google.ro-RO-Wavenet-A',
+              voice: 'Polly.Carmen',
               language: 'ro-RO'
-            }, result.response);
+            }, this.makeNaturalVoice(result.response));
           }
         }
       } else {
@@ -134,9 +158,9 @@ class TwilioHandler {
         });
         
         gather.say({
-          voice: 'Google.ro-RO-Wavenet-A',
+          voice: 'Polly.Carmen',
           language: 'ro-RO'
-        }, 'Cu ce vă pot ajuta?');
+        }, this.makeNaturalVoice('Cu ce vă pot ajuta?'));
       }
 
       res.type('text/xml');
@@ -147,9 +171,9 @@ class TwilioHandler {
       
       const twiml = new VoiceResponse();
       twiml.say({
-        voice: 'Google.ro-RO-Wavenet-A',
+        voice: 'Polly.Carmen',
         language: 'ro-RO'
-      }, 'Ne pare rău, a apărut o eroare. Vă rugăm să sunați din nou.');
+      }, this.makeNaturalVoice('Ne pare rău, a apărut o eroare. Vă rugăm să sunați din nou.'));
       twiml.hangup();
       
       res.type('text/xml');

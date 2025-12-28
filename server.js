@@ -15,6 +15,9 @@ app.use(cors({ origin: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Serve cached audio files
+app.use('/cache', express.static('cache'));
+
 // Initialize handlers
 const voiceAI = new VoiceAIHandler();
 const twilioHandler = new TwilioHandler(voiceAI);
@@ -26,7 +29,7 @@ app.get('/', (req, res) => {
     service: 'SuperParty Backend - WhatsApp + Voice',
     activeCalls: twilioHandler.getActiveCalls().length,
     voiceAI: voiceAI.isConfigured() ? 'enabled' : 'disabled',
-    coqui: voiceAI.coqui?.isConfigured() ? 'enabled' : 'disabled'
+    googleTTS: voiceAI.googleTTS?.isConfigured() ? 'enabled' : 'disabled'
   });
 });
 
