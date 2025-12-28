@@ -25,6 +25,10 @@ class TwilioHandler {
 
     const twiml = new VoiceResponse();
     
+    // Wait for 3 rings before answering (approximately 9 seconds)
+    // Each ring is about 3 seconds
+    twiml.pause({ length: 9 });
+    
     // Direct to AI conversation
     twiml.redirect({
       method: 'POST'
@@ -64,19 +68,21 @@ class TwilioHandler {
         
         if (audioUrl) {
           // Use Google TTS audio (natural voice)
+          console.log('[Voice] Using Google Cloud TTS (natural voice)');
           const fullUrl = `${process.env.BACKEND_URL}${audioUrl}`;
           gather.play(fullUrl);
         } else {
-          // Fallback to Polly
+          // Fallback to Google Wavenet (more natural than Polly)
+          console.log('[Voice] Using Google Wavenet fallback');
           gather.say({
-            voice: 'Polly.Carmen',
+            voice: 'Google.ro-RO-Wavenet-A',
             language: 'ro-RO'
           }, greetingText);
         }
         
         // Dacă nu vorbește după 6 secunde
         twiml.say({
-          voice: 'Polly.Carmen',
+          voice: 'Google.ro-RO-Wavenet-A',
           language: 'ro-RO'
         }, 'Vă ascult.');
         
@@ -91,7 +97,7 @@ class TwilioHandler {
             twiml.play(fullUrl);
           } else {
             twiml.say({
-              voice: 'Polly.Carmen',
+              voice: 'Google.ro-RO-Wavenet-A',
               language: 'ro-RO'
             }, result.response);
           }
@@ -103,9 +109,7 @@ class TwilioHandler {
           this.activeCalls.delete(CallSid);
           
         } else {
-          // Continue conversation - wrap in SSML
-          const ssmlResponse = `<speak><prosody rate="95%" pitch="+5%">${result.response}</prosody></speak>`;
-          
+          // Continue conversation
           const gather = twiml.gather({
             input: 'speech',
             language: 'ro-RO',
@@ -115,16 +119,21 @@ class TwilioHandler {
             method: 'POST'
           });
           
-          gather.say({
-            voice: 'Polly.Carmen',
-            language: 'ro-RO'
-          }, ssmlResponse);
+          if (result.audioUrl) {
+            const fullUrl = `${process.env.BACKEND_URL}${result.audioUrl}`;
+            gather.play(fullUrl);
+          } else {
+            gather.say({
+              voice: 'Google.ro-RO-Wavenet-A',
+              language: 'ro-RO'
+            }, result.response);
+          }
           
           // Dacă nu vorbește, repetă
           twiml.say({
-            voice: 'Polly.Carmen',
+            voice: 'Google.ro-RO-Wavenet-A',
             language: 'ro-RO'
-          }, '<speak><prosody rate="95%">Vă ascult.</prosody></speak>');
+          }, 'Vă ascult.');
         }
       } else {
         // No input - repeat
@@ -138,12 +147,12 @@ class TwilioHandler {
         });
         
         gather.say({
-          voice: 'Polly.Carmen',
+          voice: 'Google.ro-RO-Wavenet-A',
           language: 'ro-RO'
         }, 'Vă rog să repetați.');
         
         twiml.say({
-          voice: 'Polly.Carmen',
+          voice: 'Google.ro-RO-Wavenet-A',
           language: 'ro-RO'
         }, 'Vă ascult.');
       }
@@ -156,7 +165,7 @@ class TwilioHandler {
       
       const twiml = new VoiceResponse();
       twiml.say({
-        voice: 'Polly.Carmen',
+        voice: 'Google.ro-RO-Wavenet-A',
         language: 'ro-RO'
       }, 'Ne pare rău, a apărut o eroare. Vă rugăm să sunați din nou.');
       twiml.hangup();
