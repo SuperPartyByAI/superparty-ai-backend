@@ -51,6 +51,8 @@ class TwilioHandler {
     try {
       const { CallSid, From, SpeechResult, initial } = req.body;
       
+      console.log('[Twilio] AI Conversation called:', { CallSid, From, initial, SpeechResult: SpeechResult?.substring(0, 30) });
+      
       const twiml = new VoiceResponse();
       
       if (initial === 'true') {
