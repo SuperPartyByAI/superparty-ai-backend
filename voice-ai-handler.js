@@ -14,8 +14,8 @@ class VoiceAIHandler {
       console.warn('[VoiceAI] OpenAI API key missing - Voice AI disabled');
     }
     
-    // Initialize Coqui for Kasya voice
-    this.coqui = new CoquiHandler();
+    // Disable Coqui for now (service not available)
+    this.coqui = null; // new CoquiHandler();
     this.conversations = new Map();
   }
 
@@ -167,15 +167,10 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
         .replace(/\[COMPLETE\]/g, '')
         .trim();
 
-      // Generate audio with Kasya voice (Coqui)
-      let audioUrl = null;
-      if (this.coqui.isConfigured()) {
-        audioUrl = await this.coqui.generateSpeech(cleanResponse);
-      }
-
+      // Use Polly voice (Coqui service not available)
       return {
         response: cleanResponse,
-        audioUrl,
+        audioUrl: null, // Will use Polly fallback
         completed,
         data: reservationData
       };
