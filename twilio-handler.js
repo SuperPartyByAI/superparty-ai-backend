@@ -25,9 +25,8 @@ class TwilioHandler {
 
     const twiml = new VoiceResponse();
     
-    // Wait for 3 rings before answering (approximately 9 seconds)
-    // Each ring is about 3 seconds
-    twiml.pause({ length: 9 });
+    // Wait for 2 rings before answering (6 seconds)
+    twiml.pause({ length: 6 });
     
     // Direct to AI conversation
     twiml.redirect({
@@ -60,8 +59,8 @@ class TwilioHandler {
         const gather = twiml.gather({
           input: 'speech',
           language: 'ro-RO',
-          speechTimeout: 4,
-          timeout: 6,
+          speechTimeout: 'auto',
+          timeout: 5,
           action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
           method: 'POST'
         });
@@ -79,12 +78,6 @@ class TwilioHandler {
             language: 'ro-RO'
           }, greetingText);
         }
-        
-        // Dacă nu vorbește după 6 secunde
-        twiml.say({
-          voice: 'Google.ro-RO-Wavenet-A',
-          language: 'ro-RO'
-        }, 'Vă ascult.');
         
       } else if (SpeechResult) {
         // Process user input
@@ -113,8 +106,8 @@ class TwilioHandler {
           const gather = twiml.gather({
             input: 'speech',
             language: 'ro-RO',
-            speechTimeout: 4,
-            timeout: 6,
+            speechTimeout: 'auto',
+            timeout: 5,
             action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
             method: 'POST'
           });
@@ -128,19 +121,13 @@ class TwilioHandler {
               language: 'ro-RO'
             }, result.response);
           }
-          
-          // Dacă nu vorbește, repetă
-          twiml.say({
-            voice: 'Google.ro-RO-Wavenet-A',
-            language: 'ro-RO'
-          }, 'Vă ascult.');
         }
       } else {
-        // No input - repeat
+        // No input - prompt again
         const gather = twiml.gather({
           input: 'speech',
           language: 'ro-RO',
-          speechTimeout: 3,
+          speechTimeout: 'auto',
           timeout: 5,
           action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
           method: 'POST'
@@ -149,12 +136,7 @@ class TwilioHandler {
         gather.say({
           voice: 'Google.ro-RO-Wavenet-A',
           language: 'ro-RO'
-        }, 'Vă rog să repetați.');
-        
-        twiml.say({
-          voice: 'Google.ro-RO-Wavenet-A',
-          language: 'ro-RO'
-        }, 'Vă ascult.');
+        }, 'Cu ce vă pot ajuta?');
       }
 
       res.type('text/xml');
