@@ -1,6 +1,8 @@
 const OpenAI = require('openai');
 const GoogleTTSHandler = require('./google-tts-handler');
 const ElevenLabsHandler = require('./elevenlabs-handler');
+const fs = require('fs');
+const path = require('path');
 
 class VoiceAIHandler {
   constructor() {
@@ -28,6 +30,38 @@ class VoiceAIHandler {
     }
     
     this.conversations = new Map();
+    this.clientsFile = path.join(__dirname, 'clients.json');
+    this.clients = this.loadClients();
+  }
+  
+  loadClients() {
+    try {
+      if (fs.existsSync(this.clientsFile)) {
+        const data = fs.readFileSync(this.clientsFile, 'utf8');
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.error('[VoiceAI] Error loading clients:', error);
+    }
+    return {};
+  }
+  
+  saveClients() {
+    try {
+      fs.writeFileSync(this.clientsFile, JSON.stringify(this.clients, null, 2));
+    } catch (error) {
+      console.error('[VoiceAI] Error saving clients:', error);
+    }
+  }
+  
+  getClientName(phoneNumber) {
+    return this.clients[phoneNumber] || null;
+  }
+  
+  saveClientName(phoneNumber, name) {
+    this.clients[phoneNumber] = name;
+    this.saveClients();
+    console.log('[VoiceAI] Saved client:', phoneNumber, '->', name);
   }
 
   isConfigured() {
@@ -139,7 +173,7 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
   /**
    * Process conversation with GPT-4o
    */
-  async processConversation(callSid, userMessage) {
+  async processConversation(callSid, userMessage, phoneNumber = null) {
     if (!this.openai) {
       return {
         response: 'Ne pare rău, serviciul Voice AI nu este disponibil momentan.',
@@ -154,12 +188,22 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
       let conversation = this.conversations.get(callSid);
       
       if (!conversation) {
+        // Check if returning client
+        const clientName = phoneNumber ? this.getClientName(phoneNumber) : null;
+        let greeting = 'Bună ziua, SuperParty, cu ce vă ajut?';
+        
+        if (clientName) {
+          greeting = `Bună ziua ${clientName}, SuperParty, cu ce vă pot ajuta?`;
+          console.log('[VoiceAI] Returning client:', clientName, phoneNumber);
+        }
+        
         conversation = {
           messages: [
             { role: 'system', content: this.getSystemPrompt() },
-            { role: 'assistant', content: 'Bună ziua, SuperParty, cu ce vă ajut?' }
+            { role: 'assistant', content: greeting }
           ],
-          data: {}
+          data: {},
+          phoneNumber: phoneNumber
         };
         this.conversations.set(callSid, conversation);
       }
@@ -203,6 +247,26 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
       if (assistantMessage.includes('[COMPLETE]')) {
         completed = true;
         reservationData = conversation.data;
+      }
+      
+      // Detect and save client name from user message
+      if (conversation.phoneNumber && userMessage) {
+        const namePatterns = [
+          /(?:m[ăa] (?:cheam[ăa]|numesc)|numele meu (?:e|este))\s+([A-ZĂÎÂȘȚ][a-zăîâșț]+)/i,
+          /^([A-ZĂÎÂȘȚ][a-zăîâșț]+)$/,
+          /sunt\s+([A-ZĂÎÂȘȚ][a-zăîâșț]+)/i
+        ];
+        
+        for (const pattern of namePatterns) {
+          const match = userMessage.match(pattern);
+          if (match && match[1]) {
+            const name = match[1];
+            if (name.length >= 3 && !this.getClientName(conversation.phoneNumber)) {
+              this.saveClientName(conversation.phoneNumber, name);
+              break;
+            }
+          }
+        }
       }
 
       // Clean response

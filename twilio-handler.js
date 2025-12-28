@@ -60,8 +60,14 @@ class TwilioHandler {
       const twiml = new VoiceResponse();
       
       if (initial === 'true') {
-        // Initialize conversation with greeting
-        const greetingText = 'Bună ziua! Numele meu este Kasya, de la SuperParty. Cu ce vă pot ajuta?';
+        // Check if returning client
+        const clientName = this.voiceAI.getClientName(From);
+        let greetingText = 'Bună ziua! Numele meu este Kasya. Cu ce vă pot ajuta?';
+        
+        if (clientName) {
+          greetingText = `Bună ziua ${clientName}! Cu ce vă pot ajuta?`;
+          console.log('[Voice] Returning client:', clientName, From);
+        }
         
         // Initialize conversation in VoiceAI
         this.voiceAI.conversations.set(CallSid, {
@@ -69,7 +75,8 @@ class TwilioHandler {
             { role: 'system', content: this.voiceAI.getSystemPrompt() },
             { role: 'assistant', content: greetingText }
           ],
-          data: {}
+          data: {},
+          phoneNumber: From
         });
         
         // Try to get audio with priority: ElevenLabs > Google TTS
@@ -124,7 +131,7 @@ class TwilioHandler {
         
       } else if (SpeechResult) {
         // Process user input
-        const result = await this.voiceAI.processConversation(CallSid, SpeechResult);
+        const result = await this.voiceAI.processConversation(CallSid, SpeechResult, From);
         
         if (result.completed) {
           // Conversation complete
