@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const GoogleTTSHandler = require('./google-tts-handler');
+const ElevenLabsHandler = require('./elevenlabs-handler');
 
 class VoiceAIHandler {
   constructor() {
@@ -14,8 +15,18 @@ class VoiceAIHandler {
       console.warn('[VoiceAI] OpenAI API key missing - Voice AI disabled');
     }
     
-    // Use Google TTS (natural voice, free tier)
+    // Initialize TTS handlers (priority: ElevenLabs > Google TTS > Polly)
+    this.elevenLabs = new ElevenLabsHandler();
     this.googleTTS = new GoogleTTSHandler();
+    
+    if (this.elevenLabs.isConfigured()) {
+      console.log('[VoiceAI] ✅ ElevenLabs TTS enabled (PREMIUM VOICE)');
+    } else if (this.googleTTS.isConfigured()) {
+      console.log('[VoiceAI] ✅ Google Cloud TTS enabled');
+    } else {
+      console.log('[VoiceAI] ⚠️ Using Polly fallback (basic voice)');
+    }
+    
     this.conversations = new Map();
   }
 
@@ -167,10 +178,25 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
         .replace(/\[COMPLETE\]/g, '')
         .trim();
 
-      // Generate audio with Google TTS (natural voice)
+      // Generate audio with priority: ElevenLabs > Google TTS > Polly
       let audioUrl = null;
-      if (this.googleTTS.isConfigured()) {
+      
+      if (this.elevenLabs.isConfigured()) {
+        audioUrl = await this.elevenLabs.generateSpeech(cleanResponse);
+        if (audioUrl) {
+          console.log('[VoiceAI] 🎤 Using ElevenLabs (PREMIUM)');
+        }
+      }
+      
+      if (!audioUrl && this.googleTTS.isConfigured()) {
         audioUrl = await this.googleTTS.generateSpeech(cleanResponse);
+        if (audioUrl) {
+          console.log('[VoiceAI] 🎤 Using Google TTS');
+        }
+      }
+      
+      if (!audioUrl) {
+        console.log('[VoiceAI] ⚠️ Using Polly fallback');
       }
 
       return {

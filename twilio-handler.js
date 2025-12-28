@@ -66,18 +66,31 @@ class TwilioHandler {
           data: {}
         });
         
-        // Try to get audio from Google TTS
+        // Try to get audio with priority: ElevenLabs > Google TTS
         let audioUrl = null;
-        if (this.voiceAI.googleTTS?.isConfigured()) {
+        
+        if (this.voiceAI.elevenLabs?.isConfigured()) {
+          console.log('[Voice] Attempting ElevenLabs TTS...');
+          audioUrl = await this.voiceAI.elevenLabs.generateSpeech(greetingText);
+          if (audioUrl) {
+            console.log('[Voice] ✅ Using ElevenLabs (PREMIUM VOICE)');
+          } else {
+            console.log('[Voice] ❌ ElevenLabs failed');
+          }
+        }
+        
+        if (!audioUrl && this.voiceAI.googleTTS?.isConfigured()) {
           console.log('[Voice] Attempting Google Cloud TTS...');
           audioUrl = await this.voiceAI.googleTTS.generateSpeech(greetingText);
           if (audioUrl) {
-            console.log('[Voice] ✅ Using Google Cloud TTS (natural voice)');
+            console.log('[Voice] ✅ Using Google Cloud TTS');
           } else {
             console.log('[Voice] ❌ Google Cloud TTS failed');
           }
-        } else {
-          console.log('[Voice] ⚠️ Google Cloud TTS not configured');
+        }
+        
+        if (!audioUrl) {
+          console.log('[Voice] ⚠️ Using Polly fallback with SSML');
         }
         
         const gather = twiml.gather({

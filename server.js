@@ -29,7 +29,9 @@ app.get('/', (req, res) => {
     service: 'SuperParty Backend - WhatsApp + Voice',
     activeCalls: twilioHandler.getActiveCalls().length,
     voiceAI: voiceAI.isConfigured() ? 'enabled' : 'disabled',
-    googleTTS: voiceAI.googleTTS?.isConfigured() ? 'enabled' : 'disabled'
+    voice: voiceAI.elevenLabs?.isConfigured() ? 'ElevenLabs (PREMIUM)' : 
+           voiceAI.googleTTS?.isConfigured() ? 'Google TTS' : 
+           'Polly (fallback)'
   });
 });
 
