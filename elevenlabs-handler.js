@@ -37,6 +37,9 @@ class ElevenLabsHandler {
       }
 
       console.log('[ElevenLabs] Generating speech...');
+      console.log('[ElevenLabs] Text:', text);
+      console.log('[ElevenLabs] Voice ID:', this.voiceId);
+      console.log('[ElevenLabs] API Key:', this.apiKey.substring(0, 15) + '...');
 
       const postData = JSON.stringify({
         text: text,
@@ -48,6 +51,8 @@ class ElevenLabsHandler {
           use_speaker_boost: true
         }
       });
+      
+      console.log('[ElevenLabs] Request body:', postData.substring(0, 100));
 
       const audioData = await new Promise((resolve, reject) => {
         const req = https.request({
@@ -61,13 +66,18 @@ class ElevenLabsHandler {
             'Content-Length': postData.length
           }
         }, (res) => {
+          console.log('[ElevenLabs] Response status:', res.statusCode);
           const chunks = [];
           res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
             if (res.statusCode === 200) {
-              resolve(Buffer.concat(chunks));
+              const buffer = Buffer.concat(chunks);
+              console.log('[ElevenLabs] Success! Audio size:', buffer.length, 'bytes');
+              resolve(buffer);
             } else {
-              reject(new Error(`ElevenLabs API error: ${res.statusCode}`));
+              const errorBody = Buffer.concat(chunks).toString();
+              console.error('[ElevenLabs] Error response:', errorBody);
+              reject(new Error(`ElevenLabs API error: ${res.statusCode} - ${errorBody}`));
             }
           });
         });
