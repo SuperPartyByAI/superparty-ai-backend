@@ -61,9 +61,9 @@ class ElevenLabsHandler {
           method: 'POST',
           headers: {
             'Accept': 'audio/mpeg',
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'xi-api-key': this.apiKey,
-            'Content-Length': postData.length
+            'Content-Length': Buffer.byteLength(postData, 'utf8')
           }
         }, (res) => {
           console.log('[ElevenLabs] Response status:', res.statusCode);
