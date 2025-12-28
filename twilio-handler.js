@@ -44,17 +44,15 @@ class TwilioHandler {
       const twiml = new VoiceResponse();
       
       if (initial === 'true') {
-        // First message - greeting with SSML for natural speech
-        const greeting = `<speak>
-          <prosody rate="95%" pitch="+5%">
-            Bună ziua! <break time="300ms"/> 
-            Numele meu este Kasya, <break time="200ms"/> 
-            de la SuperParty. <break time="400ms"/>
-            Cu ce vă pot ajuta?
-          </prosody>
-        </speak>`;
+        // First message - greeting
+        const greetingText = 'Bună ziua! Numele meu este Kasya, de la SuperParty. Cu ce vă pot ajuta?';
         
-        // Use Polly voice with SSML
+        // Try to get audio from Google TTS
+        let audioUrl = null;
+        if (this.voiceAI.googleTTS?.isConfigured()) {
+          audioUrl = await this.voiceAI.googleTTS.generateSpeech(greetingText);
+        }
+        
         const gather = twiml.gather({
           input: 'speech',
           language: 'ro-RO',
@@ -64,29 +62,39 @@ class TwilioHandler {
           method: 'POST'
         });
         
-        gather.say({
-          voice: 'Polly.Carmen',
-          language: 'ro-RO'
-        }, greeting);
+        if (audioUrl) {
+          // Use Google TTS audio (natural voice)
+          const fullUrl = `${process.env.BACKEND_URL}${audioUrl}`;
+          gather.play(fullUrl);
+        } else {
+          // Fallback to Polly
+          gather.say({
+            voice: 'Polly.Carmen',
+            language: 'ro-RO'
+          }, greetingText);
+        }
         
         // Dacă nu vorbește după 6 secunde
         twiml.say({
           voice: 'Polly.Carmen',
           language: 'ro-RO'
-        }, '<speak><prosody rate="95%">Vă ascult.</prosody></speak>');
+        }, 'Vă ascult.');
         
       } else if (SpeechResult) {
         // Process user input
         const result = await this.voiceAI.processConversation(CallSid, SpeechResult);
         
         if (result.completed) {
-          // Conversation complete - wrap in SSML for natural speech
-          const ssmlResponse = `<speak><prosody rate="95%" pitch="+5%">${result.response}</prosody></speak>`;
-          
-          twiml.say({
-            voice: 'Polly.Carmen',
-            language: 'ro-RO'
-          }, ssmlResponse);
+          // Conversation complete
+          if (result.audioUrl) {
+            const fullUrl = `${process.env.BACKEND_URL}${result.audioUrl}`;
+            twiml.play(fullUrl);
+          } else {
+            twiml.say({
+              voice: 'Polly.Carmen',
+              language: 'ro-RO'
+            }, result.response);
+          }
           
           twiml.hangup();
           

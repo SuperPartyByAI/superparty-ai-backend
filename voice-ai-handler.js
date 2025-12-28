@@ -1,5 +1,5 @@
 const OpenAI = require('openai');
-const CoquiHandler = require('./coqui-handler');
+const GoogleTTSHandler = require('./google-tts-handler');
 
 class VoiceAIHandler {
   constructor() {
@@ -14,8 +14,8 @@ class VoiceAIHandler {
       console.warn('[VoiceAI] OpenAI API key missing - Voice AI disabled');
     }
     
-    // Disable Coqui for now (service not available)
-    this.coqui = null; // new CoquiHandler();
+    // Use Google TTS (natural voice, free tier)
+    this.googleTTS = new GoogleTTSHandler();
     this.conversations = new Map();
   }
 
@@ -167,10 +167,15 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
         .replace(/\[COMPLETE\]/g, '')
         .trim();
 
-      // Use Polly voice (Coqui service not available)
+      // Generate audio with Google TTS (natural voice)
+      let audioUrl = null;
+      if (this.googleTTS.isConfigured()) {
+        audioUrl = await this.googleTTS.generateSpeech(cleanResponse);
+      }
+
       return {
         response: cleanResponse,
-        audioUrl: null, // Will use Polly fallback
+        audioUrl,
         completed,
         data: reservationData
       };
