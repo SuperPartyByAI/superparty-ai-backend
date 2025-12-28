@@ -44,21 +44,22 @@ class TwilioHandler {
       const twiml = new VoiceResponse();
       
       if (initial === 'true') {
-        // First message - greeting
-        const greeting = 'Bună ziua, SuperParty, cu ce vă ajut?';
+        // First message - greeting with SSML for natural speech
+        const greeting = `<speak>
+          <prosody rate="95%" pitch="+5%">
+            Bună ziua! <break time="300ms"/> 
+            Numele meu este Kasya, <break time="200ms"/> 
+            de la SuperParty. <break time="400ms"/>
+            Cu ce vă pot ajuta?
+          </prosody>
+        </speak>`;
         
-        // Try to get audio from Coqui
-        let audioUrl = null;
-        if (this.voiceAI.coqui?.isConfigured()) {
-          audioUrl = await this.voiceAI.coqui.generateSpeech(greeting);
-        }
-        
-        // Use Polly voice (mai naturală decât Coqui pentru acum)
+        // Use Polly voice with SSML
         const gather = twiml.gather({
           input: 'speech',
           language: 'ro-RO',
-          speechTimeout: 3,
-          timeout: 5,
+          speechTimeout: 4,
+          timeout: 6,
           action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
           method: 'POST'
         });
@@ -68,22 +69,24 @@ class TwilioHandler {
           language: 'ro-RO'
         }, greeting);
         
-        // Dacă nu vorbește, repetă
+        // Dacă nu vorbește după 6 secunde
         twiml.say({
           voice: 'Polly.Carmen',
           language: 'ro-RO'
-        }, 'Vă ascult.');
+        }, '<speak><prosody rate="95%">Vă ascult.</prosody></speak>');
         
       } else if (SpeechResult) {
         // Process user input
         const result = await this.voiceAI.processConversation(CallSid, SpeechResult);
         
         if (result.completed) {
-          // Conversation complete
+          // Conversation complete - wrap in SSML for natural speech
+          const ssmlResponse = `<speak><prosody rate="95%" pitch="+5%">${result.response}</prosody></speak>`;
+          
           twiml.say({
             voice: 'Polly.Carmen',
             language: 'ro-RO'
-          }, result.response);
+          }, ssmlResponse);
           
           twiml.hangup();
           
@@ -92,12 +95,14 @@ class TwilioHandler {
           this.activeCalls.delete(CallSid);
           
         } else {
-          // Continue conversation
+          // Continue conversation - wrap in SSML
+          const ssmlResponse = `<speak><prosody rate="95%" pitch="+5%">${result.response}</prosody></speak>`;
+          
           const gather = twiml.gather({
             input: 'speech',
             language: 'ro-RO',
-            speechTimeout: 3,
-            timeout: 5,
+            speechTimeout: 4,
+            timeout: 6,
             action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
             method: 'POST'
           });
@@ -105,13 +110,13 @@ class TwilioHandler {
           gather.say({
             voice: 'Polly.Carmen',
             language: 'ro-RO'
-          }, result.response);
+          }, ssmlResponse);
           
           // Dacă nu vorbește, repetă
           twiml.say({
             voice: 'Polly.Carmen',
             language: 'ro-RO'
-          }, 'Vă ascult.');
+          }, '<speak><prosody rate="95%">Vă ascult.</prosody></speak>');
         }
       } else {
         // No input - repeat
