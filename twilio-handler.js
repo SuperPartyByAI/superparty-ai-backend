@@ -49,7 +49,11 @@ class TwilioHandler {
    */
   async handleAIConversation(req, res) {
     try {
-      const { CallSid, From, SpeechResult, initial } = req.body;
+      // Get params from both query and body (Twilio sends in both)
+      const CallSid = req.body.CallSid || req.query.CallSid;
+      const From = req.body.From || req.query.From;
+      const SpeechResult = req.body.SpeechResult;
+      const initial = req.query.initial || req.body.initial;
       
       console.log('[Twilio] AI Conversation called:', { CallSid, From, initial, SpeechResult: SpeechResult?.substring(0, 30) });
       
