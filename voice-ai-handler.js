@@ -212,10 +212,63 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
     }
     
     try {
+      // TRIGGER SYSTEM: Detectare "continuam"
+      if (userMessage && /continuam|continua/i.test(userMessage)) {
+        console.log('[VoiceAI] 🔍 Trigger "continuam" detectat - încărcare credențiale');
+        
+        try {
+          // Citește ISTORIC.json
+          const istoricPath = '/workspaces/Aplicatie-SuperpartyByAi/ISTORIC.json';
+          if (fs.existsSync(istoricPath)) {
+            const istoric = JSON.parse(fs.readFileSync(istoricPath, 'utf8'));
+            const credentials = istoric.variables;
+            
+            // Setează env vars pentru sesiunea curentă
+            if (credentials.OPENAI_API_KEY) process.env.OPENAI_API_KEY = credentials.OPENAI_API_KEY;
+            if (credentials.TWILIO_ACCOUNT_SID) process.env.TWILIO_ACCOUNT_SID = credentials.TWILIO_ACCOUNT_SID;
+            if (credentials.TWILIO_AUTH_TOKEN) process.env.TWILIO_AUTH_TOKEN = credentials.TWILIO_AUTH_TOKEN;
+            if (credentials.ELEVENLABS_API_KEY) process.env.ELEVENLABS_API_KEY = credentials.ELEVENLABS_API_KEY;
+            
+            console.log('[VoiceAI] ✅ Credențiale încărcate din ISTORIC.json');
+            
+            return {
+              response: 'Bună! Am încărcat toate credențialele. Cu ce te pot ajuta?',
+              audioUrl: null,
+              completed: false,
+              data: null
+            };
+          }
+        } catch (e) {
+          console.error('[VoiceAI] ❌ Eroare citire ISTORIC.json:', e.message);
+        }
+      }
+      
       // Get or create conversation
       let conversation = this.conversations.get(callSid);
       
       if (!conversation) {
+        // AUTO-LOAD: Încarcă credențiale automat la început
+        if (!process.env.OPENAI_API_KEY) {
+          console.log('[VoiceAI] 🔍 Auto-load credențiale la început conversație');
+          
+          try {
+            const istoricPath = '/workspaces/Aplicatie-SuperpartyByAi/ISTORIC.json';
+            if (fs.existsSync(istoricPath)) {
+              const istoric = JSON.parse(fs.readFileSync(istoricPath, 'utf8'));
+              const credentials = istoric.variables;
+              
+              if (credentials.OPENAI_API_KEY) process.env.OPENAI_API_KEY = credentials.OPENAI_API_KEY;
+              if (credentials.TWILIO_ACCOUNT_SID) process.env.TWILIO_ACCOUNT_SID = credentials.TWILIO_ACCOUNT_SID;
+              if (credentials.TWILIO_AUTH_TOKEN) process.env.TWILIO_AUTH_TOKEN = credentials.TWILIO_AUTH_TOKEN;
+              if (credentials.ELEVENLABS_API_KEY) process.env.ELEVENLABS_API_KEY = credentials.ELEVENLABS_API_KEY;
+              
+              console.log('[VoiceAI] ✅ Credențiale auto-loaded din ISTORIC.json');
+            }
+          } catch (e) {
+            console.error('[VoiceAI] ⚠️ Nu am putut auto-load credențiale:', e.message);
+          }
+        }
+        
         // Get client data from Firebase
         const clientData = phoneNumber ? await this.getClientData(phoneNumber) : null;
         const clientName = clientData?.name || (phoneNumber ? await this.getClientName(phoneNumber) : null);

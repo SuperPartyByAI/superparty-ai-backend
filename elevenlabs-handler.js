@@ -48,7 +48,8 @@ class ElevenLabsHandler {
           stability: 0.7,
           similarity_boost: 0.75,
           style: 0.5,
-          use_speaker_boost: true
+          use_speaker_boost: true,
+          speaking_rate: 1.0
         }
       });
       
