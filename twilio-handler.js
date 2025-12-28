@@ -103,7 +103,7 @@ class TwilioHandler {
           input: 'speech',
           language: 'ro-RO',
           speechTimeout: 'auto',
-          timeout: 5,
+          timeout: 2.5,
           action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
           method: 'POST'
         });
@@ -150,7 +150,7 @@ class TwilioHandler {
             input: 'speech',
             language: 'ro-RO',
             speechTimeout: 'auto',
-            timeout: 5,
+            timeout: 2.5,
             action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
             method: 'POST'
           });
@@ -171,7 +171,7 @@ class TwilioHandler {
           input: 'speech',
           language: 'ro-RO',
           speechTimeout: 'auto',
-          timeout: 5,
+          timeout: 2.5,
           action: `${process.env.BACKEND_URL}/api/voice/ai-conversation`,
           method: 'POST'
         });
