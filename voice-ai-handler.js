@@ -38,7 +38,22 @@ class VoiceAIHandler {
    * System prompt - Operator telefonic UMAN cu vocea Kasya
    */
   getSystemPrompt() {
+    // Context temporal pentru înțelegerea datelor relative
+    const now = new Date();
+    const days = ['Duminică', 'Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă'];
+    const months = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 
+                    'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'];
+    
+    const currentDay = days[now.getDay()];
+    const currentDate = now.getDate();
+    const currentMonth = months[now.getMonth()];
+    const currentYear = now.getFullYear();
+    
     return `ROL: Operator telefonic UMAN (femeie) la SuperParty, firmă evenimente copii.
+
+CONTEXT TEMPORAL:
+Astăzi este ${currentDay}, ${currentDate} ${currentMonth} ${currentYear}.
+Când clientul spune "azi", "mâine", "poimâine", "ieri", "săptămâna viitoare", calculezi data exactă.
 
 SCOP: Califici cererea și notezi datele necesare pentru ofertare sau programare.
 
