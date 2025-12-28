@@ -1,6 +1,7 @@
 const OpenAI = require('openai');
 const GoogleTTSHandler = require('./google-tts-handler');
 const ElevenLabsHandler = require('./elevenlabs-handler');
+const FirebaseHandler = require('./firebase-handler');
 const fs = require('fs');
 const path = require('path');
 
@@ -29,6 +30,9 @@ class VoiceAIHandler {
       console.log('[VoiceAI] ⚠️ Using Polly fallback (basic voice)');
     }
     
+    // Initialize Firebase (priority over local JSON)
+    this.firebase = new FirebaseHandler();
+    
     this.conversations = new Map();
     this.clientsFile = path.join(__dirname, 'clients.json');
     this.clients = this.loadClients();
@@ -54,14 +58,34 @@ class VoiceAIHandler {
     }
   }
   
-  getClientName(phoneNumber) {
+  async getClientName(phoneNumber) {
+    // Try Firebase first
+    if (this.firebase.isConfigured()) {
+      const clientData = await this.firebase.getClient(phoneNumber);
+      return clientData?.name || null;
+    }
+    
+    // Fallback to local JSON
     return this.clients[phoneNumber] || null;
   }
   
-  saveClientName(phoneNumber, name) {
+  async saveClientName(phoneNumber, name) {
+    // Save to Firebase
+    if (this.firebase.isConfigured()) {
+      await this.firebase.saveClient(phoneNumber, { name });
+    }
+    
+    // Also save to local JSON as backup
     this.clients[phoneNumber] = name;
     this.saveClients();
     console.log('[VoiceAI] Saved client:', phoneNumber, '->', name);
+  }
+  
+  async getClientData(phoneNumber) {
+    if (this.firebase.isConfigured()) {
+      return await this.firebase.getClient(phoneNumber);
+    }
+    return null;
   }
 
   isConfigured() {
@@ -71,7 +95,7 @@ class VoiceAIHandler {
   /**
    * System prompt - Operator telefonic UMAN cu vocea Kasya
    */
-  getSystemPrompt() {
+  getSystemPrompt(clientContext = null) {
     // Context temporal pentru înțelegerea datelor relative
     const now = new Date();
     const days = ['Duminică', 'Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă'];
@@ -98,7 +122,7 @@ class VoiceAIHandler {
     const dayAfterDate = dayAfterTomorrow.getDate();
     const dayAfterMonth = months[dayAfterTomorrow.getMonth()];
     
-    return `ROL: Operator telefonic UMAN (femeie) la SuperParty, firmă evenimente copii.
+    let prompt = `ROL: Operator telefonic UMAN (femeie) la SuperParty, firmă evenimente copii.
 
 CONTEXT TEMPORAL:
 Astăzi este ${currentDay}, ${currentDate} ${currentMonth} ${currentYear}, ora ${currentHour}:${currentMinute}.
@@ -106,6 +130,8 @@ Mâine este ${tomorrowDay}, ${tomorrowDate} ${tomorrowMonth}.
 Poimâine este ${dayAfterDay}, ${dayAfterDate} ${dayAfterMonth}.
 
 Când clientul spune "azi", "mâine", "poimâine", "ieri", "săptămâna viitoare", folosești datele exacte de mai sus.
+
+${clientContext ? '\n' + clientContext + '\n' : ''}
 
 SCOP: Califici cererea și notezi datele necesare pentru ofertare sau programare.
 
@@ -166,8 +192,10 @@ CONFIRMARE FINALĂ:
 
 TRACKING:
 Ține evidența informațiilor în format JSON:
-[DATA: {"date": "...", "location": "...", "eventType": "...", "package": "...", "price": "..."}]
+[DATA: {"date": "...", "location": "...", "eventType": "...", "childName": "...", "childAge": "...", "childBirthDate": "...", "package": "...", "price": "...", "services": [...]}]
 Când ai toate informațiile, adaugă [COMPLETE]`;
+    
+    return prompt;
   }
 
   /**
@@ -188,8 +216,13 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
       let conversation = this.conversations.get(callSid);
       
       if (!conversation) {
-        // Check if returning client
-        const clientName = phoneNumber ? this.getClientName(phoneNumber) : null;
+        // Get client data from Firebase
+        const clientData = phoneNumber ? await this.getClientData(phoneNumber) : null;
+        const clientName = clientData?.name || (phoneNumber ? await this.getClientName(phoneNumber) : null);
+        
+        // Build intelligent context
+        const clientContext = clientData ? this.firebase.buildClientContext(clientData) : null;
+        
         let greeting = 'Bună ziua, SuperParty, cu ce vă ajut?';
         
         if (clientName) {
@@ -199,11 +232,12 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
         
         conversation = {
           messages: [
-            { role: 'system', content: this.getSystemPrompt() },
+            { role: 'system', content: this.getSystemPrompt(clientContext) },
             { role: 'assistant', content: greeting }
           ],
           data: {},
-          phoneNumber: phoneNumber
+          phoneNumber: phoneNumber,
+          clientData: clientData
         };
         this.conversations.set(callSid, conversation);
       }
@@ -238,6 +272,14 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
       if (dataMatch) {
         try {
           const extractedData = JSON.parse(dataMatch[1]);
+          
+          // Calculate birthDate from age if not provided
+          if (extractedData.childAge && !extractedData.childBirthDate && extractedData.date) {
+            const eventDate = new Date(extractedData.date);
+            const birthYear = eventDate.getFullYear() - parseInt(extractedData.childAge);
+            extractedData.childBirthDate = `${birthYear}-01-01`; // Approximate
+          }
+          
           conversation.data = { ...conversation.data, ...extractedData };
         } catch (e) {
           console.error('[VoiceAI] Failed to parse data:', e);
@@ -247,6 +289,50 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
       if (assistantMessage.includes('[COMPLETE]')) {
         completed = true;
         reservationData = conversation.data;
+        
+        // Save to Firebase
+        if (conversation.phoneNumber && this.firebase.isConfigured()) {
+          const clientName = reservationData.clientName || conversation.clientData?.name || 'Unknown';
+          
+          // Save/update client
+          await this.firebase.saveClient(conversation.phoneNumber, {
+            name: clientName
+          });
+          
+          // Add child if provided
+          if (reservationData.childName && reservationData.childBirthDate) {
+            const clientData = await this.firebase.getClient(conversation.phoneNumber);
+            const children = clientData?.children || [];
+            
+            // Check if child already exists
+            const existingChild = children.find(c => c.name === reservationData.childName);
+            if (!existingChild) {
+              children.push({
+                name: reservationData.childName,
+                birthDate: reservationData.childBirthDate
+              });
+              
+              await this.firebase.saveClient(conversation.phoneNumber, {
+                name: clientName,
+                children: children
+              });
+            }
+          }
+          
+          // Save event
+          await this.firebase.saveEvent(conversation.phoneNumber, {
+            date: reservationData.date,
+            location: reservationData.location,
+            eventType: reservationData.eventType,
+            childName: reservationData.childName,
+            childAge: reservationData.childAge,
+            package: reservationData.package,
+            price: reservationData.price,
+            services: reservationData.services || []
+          });
+          
+          console.log('[VoiceAI] ✅ Saved to Firebase:', conversation.phoneNumber);
+        }
       }
       
       // Detect and save client name from user message
@@ -261,8 +347,9 @@ Când ai toate informațiile, adaugă [COMPLETE]`;
           const match = userMessage.match(pattern);
           if (match && match[1]) {
             const name = match[1];
-            if (name.length >= 3 && !this.getClientName(conversation.phoneNumber)) {
-              this.saveClientName(conversation.phoneNumber, name);
+            const existingName = await this.getClientName(conversation.phoneNumber);
+            if (name.length >= 3 && !existingName) {
+              await this.saveClientName(conversation.phoneNumber, name);
               break;
             }
           }
